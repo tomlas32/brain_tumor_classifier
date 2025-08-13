@@ -27,6 +27,15 @@ def _pointer_path_for(slug: str) -> Path:
     owner, name = (slug.split("/", 1) if "/" in slug else ("unknown", slug))
     return OUTPUTS_DIR / "downloads_pointer" / owner / name / "latest.json"
 
+def _empty_dir(d: Path) -> None:
+    if not d.exists():
+        return
+    for p in d.iterdir():
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+
 def gather_by_class(root: Path, exts: set[str]):
     """Return dict: class_name -> list[Path] for images under root/<class>/*"""
     mapping = defaultdict(list)
@@ -67,6 +76,8 @@ def main(argv=None) -> int:
     parser.add_argument("--exts", type=str,
                         default=".png,.jpg,.jpeg,.bmp,.tif,.tiff",
                         help="Comma-separated extensions (lowercased).")
+    parser.add_argument("--clear-dest", action="store_true",
+                    help="Delete all existing files/dirs in DATA_DIR/training and DATA_DIR/testing before writing.")
     
     t0 = time.time()
     random.seed(args.seed)
@@ -103,6 +114,11 @@ def main(argv=None) -> int:
     test_out  = DATA_DIR / "testing"
     train_out.mkdir(parents=True, exist_ok=True)
     test_out.mkdir(parents=True, exist_ok=True)
+
+    if args.clear_dest:
+        _empty_dir(train_out)
+        _empty_dir(test_out)
+        log.info("split.cleared_dest", extra={"train_out": str(train_out), "test_out": str(test_out)})
 
     # 1) Pool images from both roots
     combined = defaultdict(list)
