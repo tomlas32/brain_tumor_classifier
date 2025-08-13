@@ -1,13 +1,14 @@
 import cv2
 from pathlib import Path
-from itertools import chain
+import numpy as np
 
-def resize_and_pad(img, size=224):
+def resize_and_pad(img: np.ndarray, size: int=224) -> np.ndarray:
     """Resize image while maintaining aspect ratio, and pad to desired size."""
     h, w = img.shape[:2]
     scale = size / max(h, w)
     new_h, new_w = int(h * scale), int(w * scale)
-    resized = cv2.resize(img, (new_w, new_h))
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
 
     delta_w = size - new_w
     delta_h = size - new_h
