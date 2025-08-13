@@ -11,19 +11,84 @@ Requirements:
 
 Author: Tomasz Lasota
 Date: 2025-0-13
-Version: 1.1
+Version: 1.2
 """
 
 
-import kagglehub, os, time, argparse
+import kagglehub, os, time, argparse, json
 from pathlib import Path
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args
-from src.utils.paths import DATA_DIR
+from datetime import datetime, timezone
+from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 from src.utils.configs import DEFAULT_DATASET
 
 log = get_logger(__name__)
+POINTER_DIR = OUTPUTS_DIR / "downloads_pointer"
 
+def _find_subdir(root: Path, name: str) -> Path:
+    """Return root/name; if not present, try case-insensitive match among subdirs."""
+
+    if not root.exists():
+        log.error("find_subdir.missing_root", extra={"root": str(root), "name": name})
+        raise FileNotFoundError(f"Root does not exist: {root}")
+    if not root.is_dir():
+        log.error("find_subdir.not_a_dir", extra={"root": str(root), "name": name})
+        raise NotADirectoryError(str(root))
+    
+    target_path = root / name
+    log.debug("find_subdir.start", extra={"root": str(root), "name": name, "target_path": str(target_path)})
+
+    # 1) Exact match
+    if target_path.is_dir():
+        log.info("find_subdir: found", extra={"target_path": str(target_path)})
+        return target_path
+    
+    # 2) Case-insensitive match
+    try:
+        subdirs = sorted((p for p in root.iterdir() if p.is_dir()),
+                         key=lambda p: p.name.casefold())
+    except OSError as e:
+        log.error("find_subdir.iter_error", extra={"root": str(root), "error": str(e)})
+        raise
+
+    name_cf = name.casefold()
+    match = next((p for p in subdirs if p.name.casefold() == name_cf), None)
+    if match is not None:
+        log.info("find_subdir.ci_found", extra={"path": str(match)})
+        return match
+
+    available = [p.name for p in subdirs]
+    log.error("find_subdir.not_found",
+              extra={"root": str(root), "name": name, "available": available})
+    raise FileNotFoundError(f"Expected subdir '{name}' under {root}; available: {available}")
+
+def write_latest_fetch_json(dataset: str, dataset_root: Path, cache_dir: Path,
+                            dst: Path | None = None) -> Path:
+    
+    dataset_root = Path(dataset_root).resolve()
+    training_dir = _find_subdir(dataset_root, "Training")
+    testing_dir  = _find_subdir(dataset_root, "Testing")
+
+    payload = {
+        "dataset": dataset,
+        "dataset_root": str(dataset_root),
+        "training_dir": str(training_dir),
+        "testing_dir":  str(testing_dir),
+        "cache_dir":    str(Path(cache_dir).resolve()),
+        "fetched_at":   datetime.now(timezone.utc).isoformat()
+    }
+
+    dst = dst or (POINTER_DIR / "_latest_fetch.json")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    with dst.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        
+    log.info("handoff_written", extra={"path": str(dst)})
+    return dst
+
+# Parser with additional args for kagglehub
 def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fetch Kaggle dataset with KaggleHub")
     parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
@@ -33,6 +98,7 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
     add_common_logging_args(parser)
     return parser
 
+# Fetch a Kaggle dataset
 def fetch_kaggle(dataset: str = DEFAULT_DATASET,
                  cache_dir: Path | None = None) -> Path:
     
@@ -81,5 +147,6 @@ if __name__ == "__main__":
     
     # Run
     target = fetch_kaggle(dataset=args.dataset, cache_dir=args.cache_dir)
+    write_latest_fetch_json(args.dataset, target, args.cache_dir)
     print(target)  # keep for shell/pipeline consumption
 
