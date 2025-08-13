@@ -64,14 +64,26 @@ def _find_subdir(root: Path, name: str) -> Path:
     raise FileNotFoundError(f"Expected subdir '{name}' under {root}; available: {available}")
 
 def write_latest_fetch_json(dataset: str, dataset_root: Path, cache_dir: Path,
-                            dst: Path | None = None) -> Path:
+                            dst_dir: Path | None = None) -> Path:
     
     dataset_root = Path(dataset_root).resolve()
     training_dir = _find_subdir(dataset_root, "Training")
     testing_dir  = _find_subdir(dataset_root, "Testing")
 
+    # parse dataset name and version
+    root_name = dataset_root.name
+    ver_str = root_name.lstrip("vV") # in case it starts with 'v' or 'V'
+    version = int(ver_str) if ver_str.isdigit() else root_name
+
+    # organise pointers by Kaggle slug
+    try:
+        owner, slug = dataset.split("/", 1)
+    except ValueError:
+        owner, slug = "unknown", dataset
+
     payload = {
         "dataset": dataset,
+        "version": version,
         "dataset_root": str(dataset_root),
         "training_dir": str(training_dir),
         "testing_dir":  str(testing_dir),
@@ -79,14 +91,25 @@ def write_latest_fetch_json(dataset: str, dataset_root: Path, cache_dir: Path,
         "fetched_at":   datetime.now(timezone.utc).isoformat()
     }
 
-    dst = dst or (POINTER_DIR / "_latest_fetch.json")
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    pointer_base = (dst_dir or (POINTER_DIR / owner / slug))
+    pointer_base.mkdir(parents=True, exist_ok=True)
 
-    with dst.open("w", encoding="utf-8") as f:
+    # paths
+    latest_path   = pointer_base / "latest.json"
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    history_path  = pointer_base / f"{ts}__v{version}.json"
+
+    # write both
+    with latest_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
-        
-    log.info("handoff_written", extra={"path": str(dst)})
-    return dst
+    log.info("handoff_written.latest", extra={"path": str(latest_path)})
+
+    with history_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    log.info("handoff_written.history", extra={"path": str(history_path)})
+
+    
+    return latest_path
 
 # Parser with additional args for kagglehub
 def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
@@ -147,6 +170,8 @@ if __name__ == "__main__":
     
     # Run
     target = fetch_kaggle(dataset=args.dataset, cache_dir=args.cache_dir)
-    write_latest_fetch_json(args.dataset, target, args.cache_dir)
+    write_latest_fetch_json(dataset=args.dataset, 
+                            dataset_root=target, 
+                            cache_dir=args.cache_dir)
     print(target)  # keep for shell/pipeline consumption
 
