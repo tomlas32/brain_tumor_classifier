@@ -13,15 +13,19 @@ Pools images from --training-dir and --testing-dir, creates a random split with
 """
 
 from pathlib import Path
-import argparse, random, shutil, time
+import argparse, random, shutil, time, json, os
 from collections import defaultdict
 
-from src.utils.paths import DATA_DIR
+from src.utils.paths import DATA_DIR, OUTPUTS_DIR
+from src.utils.configs import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args
 
 log = get_logger(__name__)
 
+def _pointer_path_for(slug: str) -> Path:
+    owner, name = (slug.split("/", 1) if "/" in slug else ("unknown", slug))
+    return OUTPUTS_DIR / "downloads_pointer" / owner / name / "latest.json"
 
 def gather_by_class(root: Path, exts: set[str]):
     """Return dict: class_name -> list[Path] for images under root/<class>/*"""
@@ -53,22 +57,24 @@ def safe_copy(src: Path, dst: Path):
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Re-split class-structured image roots.")
-    parser.add_argument("--training-dir", type=Path, default=DATA_DIR / "training",
-                        help="Root with class subfolders for training images.")
-    parser.add_argument("--testing-dir", type=Path, default=DATA_DIR / "testing",
-                        help="Root with class subfolders for testing images.")
-    parser.add_argument("--output-root", type=Path, default=DATA_DIR / "combined_split_simple",
-                        help="Where training/ and testing/ will be created.")
+    parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
+                    help="Kaggle slug (owner/dataset) used to auto-locate the pointer.")
+    parser.add_argument("--pointer", type=Path, default=None,
+                        help="Optional explicit path to the pointer JSON (overrides --dataset).")
     parser.add_argument("--test-frac", type=float, default=0.20,
                         help="Fraction per class for final test set (0-1).")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed.")
     parser.add_argument("--exts", type=str,
                         default=".png,.jpg,.jpeg,.bmp,.tif,.tiff",
                         help="Comma-separated extensions (lowercased).")
-    add_common_logging_args(parser)  # --log-level, --log-file
+    
+    t0 = time.time()
+    random.seed(args.seed)
 
+    add_common_logging_args(parser)  # --log-level, --log-file
     args = parser.parse_args(argv)
-    configure_logging(level=args.log_level, log_file=args.log_file)
+
+    configure_logging(log_level=args.log_level, log_file=args.log_file)
 
     exts = {
         (e if e.startswith(".") else f".{e}")
@@ -76,17 +82,31 @@ def main(argv=None) -> int:
         if e
     }
 
-    t0 = time.time()
-    random.seed(args.seed)
+    dataset_slug = os.getenv("DATASET_SLUG", args.dataset)
+    pointer = args.pointer or _pointer_path_for(dataset_slug)
 
-    train_out = args.output_root / "training"
-    test_out = args.output_root / "testing"
+    if not pointer.exists():
+        log.error("split.pointer_missing", extra={"pointer": str(pointer)})
+        return 2
+    
+    with pointer.open("r", encoding="utf-8") as f:
+        meta = json.load(f)
+    
+    try:
+        src_training = Path(meta["training_dir"])
+        src_testing  = Path(meta["testing_dir"])
+    except KeyError as e:
+        log.error("split.pointer_key_error", extra={"missing": str(e), "pointer": str(pointer)})
+        return 2
+
+    train_out = DATA_DIR / "training"
+    test_out  = DATA_DIR / "testing"
     train_out.mkdir(parents=True, exist_ok=True)
     test_out.mkdir(parents=True, exist_ok=True)
 
     # 1) Pool images from both roots
     combined = defaultdict(list)
-    for src_root in [args.training_dir, args.testing_dir]:
+    for src_root in (src_training, src_testing):
         src_map = gather_by_class(src_root, exts)
         for cls, paths in src_map.items():
             combined[cls].extend(paths)
