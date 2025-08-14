@@ -155,12 +155,10 @@ def fetch_kaggle(dataset: str = DEFAULT_DATASET,
         log.error("download_failed", extra={"elapsed_s": elapsed}, exc_info=True)
         raise
 
-
-if __name__ == "__main__":
+def main(argv=None) -> int:
 
     parser = make_parser_fetch_kaggle()
     args = parser.parse_args()
-    
 
     # Logging: auto file per script by default; fixed if user passes --log-file; stdout always on
     if args.log_file:  # user provided a path → fixed mode
@@ -168,10 +166,30 @@ if __name__ == "__main__":
     else:              # default → auto per-script name in outputs/logs/
         configure_logging(log_level=args.log_level, file_mode="auto")
     
-    # Run
-    target = fetch_kaggle(dataset=args.dataset, cache_dir=args.cache_dir)
-    write_latest_fetch_json(dataset=args.dataset, 
-                            dataset_root=target, 
-                            cache_dir=args.cache_dir)
-    print(target)  # keep for shell/pipeline consumption
+    try:
+        # Attempt the download
+        target = fetch_kaggle(dataset=args.dataset, cache_dir=Path(args.cache_dir))
+
+        # Write pointer JSONs
+        write_latest_fetch_json(
+            dataset=args.dataset,
+            dataset_root=target,
+            cache_dir=Path(args.cache_dir)
+        )
+
+        print(target)  # for shell/pipeline consumption
+        return 0  # success
+
+    except Exception as e:
+        log.error(f"Fetch failed: {e}", exc_info=True)
+        return 1  # failure
+
+if __name__ == "__main__":
+
+    raise SystemExit(main())
+    
+
+    
+    
+    
 
