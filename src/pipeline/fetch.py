@@ -118,6 +118,10 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
                         help=f"Default: {DEFAULT_DATASET}")
     parser.add_argument("--cache-dir", type=Path, default=DATA_DIR,
                         help="Directory to store the downloaded dataset")
+    parser.add_argument("--no-pointer", action="store_true",
+                        help="Skip writing outputs/downloads_pointer/.../latest.json")
+    parser.add_argument("--pointer-dir", type=Path, default=None,
+                        help="Override destination directory for pointer JSONs")
     add_common_logging_args(parser)
     return parser
 
