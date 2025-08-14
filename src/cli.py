@@ -3,12 +3,14 @@ from typing import Optional
 from pathlib import Path
 from src.pipeline import fetch as fetch_mod
 from src.pipeline import split as split_mod
+from src.pipeline import resize as resize_mod
 # from src.pipeline.resize import resize_and_pad_batch
 # from src.pipeline.train import train_model
 # from src.pipeline.evaluate import evaluate_model
 # from src.pipeline.export import export_artifacts
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
 from src.utils.configs import DEFAULT_DATASET
+from src.utils.parser_utils import DEFAULT_EXTS
 
 app = typer.Typer()
 
@@ -71,8 +73,8 @@ def fetch(
     if log_file:
         argv += ["--log-file", str(log_file)]
 
-    code = fetch_mod.main(argv)
-    raise typer.Exit(code)
+    code = fetch_mod.main(argv)    # calls fetch.py main(argv)
+    raise typer.Exit(code)         # # propagate exit status to shell/CI
 
 @app.command()
 def split(
@@ -80,7 +82,7 @@ def split(
     pointer: Optional[Path] = None,
     test_frac: float = 0.20,
     seed: int = 42,
-    exts: str = ".png,.jpg,.jpeg,.bmp,.tif,.tiff",
+    exts: str = DEFAULT_EXTS,
     clear_dest: bool = False,
     log_level: str = "INFO",
     log_file: Optional[str] = None,
@@ -107,15 +109,49 @@ def split(
     if log_file:
         argv += ["--log-file", str(log_file)]
 
-    code = split_mod.main(argv)   # calls your split.py main(argv)
+    code = split_mod.main(argv)   # calls split.py main(argv)
     raise typer.Exit(code)        # propagate exit status to shell/CI
     
 
-# @app.command()
-# def resize(in_dir: str = str(DATA_DIR / "combined_split_simple"),
-#            out_dir: str = str(DATA_DIR / "training"),
-#            size: int = 224):
-#     resize_and_pad_batch(in_dir, out_dir, size)
+@app.command()
+def resize(
+    size: int = 224,
+    train_in_dir: Path = DATA_DIR / "training",
+    train_out_dir: Path = DATA_DIR / "training_resized",
+    test_in_dir: Path = DATA_DIR / "testing",
+    test_out_dir: Path = DATA_DIR / "testing_resized",
+    exts: str = DEFAULT_EXTS,
+    log_level: str = "INFO",
+    log_file: Optional[str] = None
+
+):
+    """
+    Resize and pad images in training and testing directories to a fixed square size.
+
+    This wraps the `resize.py` pipeline step and preserves aspect ratio
+    with black padding. Defaults assume `split.py` has been run first.
+
+    Examples:
+    python -m src.cli resize                       # default size 224, default exts
+    python -m src.cli resize --size 256            # change output size
+    python -m src.cli resize --exts all            # accept all file extensions
+    python -m src.cli resize --exts +webp,+gif     # add extra extensions to defaults
+    """
+    argv = [
+        "--size", str(size),
+        "--train-in", str(train_in_dir),
+        "--train-out", str(train_out_dir),
+        "--test-in", str(test_in_dir),
+        "--test-out", str(test_out_dir),
+        "--exts", exts,
+        "--log-level", log_level,
+    ]
+
+    if log_file:
+        argv += ["--log-file", str(log_file)]
+
+    code = resize_mod.main(argv)   # calls resize.py main(argv)
+    raise typer.Exit(code)        # propagate exit status to shell/CI
 
 # @app.command()
 # def train(cfg: str = str(CONFIGS_DIR / "train.yaml")):
