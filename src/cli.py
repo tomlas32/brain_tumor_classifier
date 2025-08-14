@@ -21,6 +21,44 @@ def fetch(
     log_level: str = "INFO",
     log_file: Optional[str] = None,
 ):
+    
+    """
+    Download a Kaggle dataset into the local data directory.
+
+    This command wraps the `fetch.py` pipeline step, downloading the specified
+    Kaggle dataset via KaggleHub into `DATA_DIR` (or a custom location) and
+    optionally writing a pointer JSON for downstream steps.
+
+    Parameters
+    ----------
+    dataset : str, optional
+        Kaggle dataset slug in the form 'owner/dataset'.
+        Defaults to the project's DEFAULT_DATASET.
+    cache_dir : Path, optional
+        Directory to store the downloaded dataset. Defaults to DATA_DIR.
+    write_pointer : bool, optional
+        If True (default), write `latest.json` and a timestamped history file
+        into the pointer directory.
+    pointer_dir : Path, optional
+        Custom directory for pointer files. Overrides the default
+        `OUTPUTS_DIR/downloads_pointer/<owner>/<slug>/`.
+    log_level : str, optional
+        Logging verbosity. One of: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+    log_file : str, optional
+        Path to a log file. If omitted, logs go to stdout and an auto-named file.
+
+    Examples
+    --------
+    # Download the default dataset into DATA_DIR and write pointer
+    python -m src.cli fetch
+
+    # Download into a custom directory without writing a pointer
+    python -m src.cli fetch --cache-dir /tmp/mydata --write-pointer False
+
+    # Download and write pointer into a custom directory
+    python -m src.cli fetch --pointer-dir /custom/dir
+
+    """
     argv = [
         "--dataset", dataset,
         "--cache-dir", str(cache_dir),
@@ -48,8 +86,12 @@ def split(
     log_file: Optional[str] = None,
 ):
     """
-    Re-split pooled images into DATA_DIR/training and DATA_DIR/testing
-    using the same flags as split.py.
+    Re-split pooled images into DATA_DIR/training and DATA_DIR/testing.
+
+    Examples:
+    python -m src.cli split                  # use default extensions
+    python -m src.cli split --exts webp      # replace defaults with webp
+    python -m src.cli split --exts +webp,+gif  # add to defaults
     """
     argv = [
         "--dataset", dataset,
