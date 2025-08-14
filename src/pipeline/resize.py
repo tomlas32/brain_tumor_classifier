@@ -1,3 +1,62 @@
+"""
+Resize (and pad) class-structured images produced by the split step.
+
+This script scans per-class folders under training/testing inputs, resizes each
+image to a square of the requested size while preserving aspect ratio, pads with
+black to fill the square, and writes the results into mirrored output folders.
+
+Typical pipeline order:
+    1) fetch.py   → download dataset
+    2) split.py   → create DATA_DIR/training and DATA_DIR/testing
+    3) resize.py  → create DATA_DIR/training_resized and DATA_DIR/testing_resized
+
+Features
+--------
+- Guards to ensure inputs exist and contain images (prevents running before split).
+- Per-class directory traversal with collision-safe writing.
+- Extension handling consistent with `parser_utils` (supports "+ext" and "all").
+- CI-friendly non-zero exit codes on error.
+
+Command-line arguments
+----------------------
+--train-in PATH       Input root for training images (default: DATA_DIR/training).
+--train-out PATH      Output root for resized training images (default: DATA_DIR/training_resized).
+--test-in PATH        Input root for testing images (default: DATA_DIR/testing).
+--test-out PATH       Output root for resized testing images (default: DATA_DIR/testing_resized).
+--size INT            Output square size in pixels (default: 224).
+--exts STR            Comma-separated extensions; '+ext' adds to defaults; 'all' disables filtering.
+--log-level LEVEL     Logging verbosity: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO).
+--log-file PATH       Optional log file path; if omitted, stdout + auto-named rotating file.
+
+Exit codes
+----------
+0  Success.
+2  Neither training nor testing input directories exist (split step likely not run).
+3  Inputs exist but no matching images were found (check --exts or run split).
+
+Examples
+--------
+# Use defaults (224 px, default extensions)
+python -m src.pipeline.resize
+
+# Accept any file type under the inputs
+python -m src.pipeline.resize --exts all
+
+# Add WEBP and GIF on top of defaults
+python -m src.pipeline.resize --exts +webp,+gif
+
+# Custom size and explicit I/O roots
+python -m src.pipeline.resize --size 256 --train-in data/training --train-out data/training_256
+
+Notes
+-----
+- Aspect ratio is preserved; padding is added to reach an exact square.
+- Interpolation switches automatically: INTER_AREA for downscaling, INTER_LINEAR for upscaling.
+- Output directories are created only after input validation passes.
+"""
+
+
+
 import cv2, argparse
 from pathlib import Path
 import numpy as np
