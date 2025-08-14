@@ -13,7 +13,7 @@ Pools images from --training-dir and --testing-dir, creates a random split with
 """
 
 from pathlib import Path
-import argparse, random, shutil, time, json, os
+import argparse, random, shutil, time, json, os, random
 from collections import defaultdict
 
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
@@ -79,11 +79,11 @@ def main(argv=None) -> int:
     parser.add_argument("--clear-dest", action="store_true",
                     help="Delete all existing files/dirs in DATA_DIR/training and DATA_DIR/testing before writing.")
     
-    t0 = time.time()
-    random.seed(args.seed)
-
     add_common_logging_args(parser)  # --log-level, --log-file
     args = parser.parse_args(argv)
+    
+    t0 = time.time()
+    random.seed(args.seed)
 
     configure_logging(log_level=args.log_level, log_file=args.log_file)
 
@@ -150,11 +150,21 @@ def main(argv=None) -> int:
 
     # 3) Summary
     elapsed = time.time() - t0
-    log.info("split:done", extra={"output_root": str(args.output_root), "elapsed_s": round(elapsed, 2)})
-    print("Split complete. Output at:", args.output_root)
+    log.info(
+    "split:done",
+    extra={
+        "train_out": str(train_out),
+        "test_out": str(test_out),
+        "elapsed_s": round(elapsed, 2),
+    },
+)
+    print("Split complete. Output at:", str(DATA_DIR))
+
     for cls, ntr, nte in summary:
         print(f"{cls:15s} -> train: {ntr:5d} | test: {nte:5d}")
-    return 0
+        log.debug("split:summary", extra={"class": cls, "train": ntr, "test": nte})
+    
+    return 0 # --exit-zero success
 
 
 if __name__ == "__main__":

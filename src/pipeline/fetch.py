@@ -171,18 +171,16 @@ def main(argv=None) -> int:
         configure_logging(log_level=args.log_level, file_mode="auto")
     
     try:
-        # Attempt the download
         target = fetch_kaggle(dataset=args.dataset, cache_dir=Path(args.cache_dir))
-
-        # Write pointer JSONs
-        write_latest_fetch_json(
-            dataset=args.dataset,
-            dataset_root=target,
-            cache_dir=Path(args.cache_dir)
-        )
-
-        print(target)  # for shell/pipeline consumption
-        return 0  # success
+        if not args.no_pointer:
+            write_latest_fetch_json(
+                dataset=args.dataset,
+                dataset_root=target,
+                cache_dir=Path(args.cache_dir),
+                dst_dir=args.pointer_dir,   # <- NEW
+            )
+        print(target)
+        return 0 # --> success
 
     except Exception as e:
         log.error(f"Fetch failed: {e}", exc_info=True)
