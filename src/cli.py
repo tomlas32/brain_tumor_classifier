@@ -4,7 +4,6 @@ from pathlib import Path
 from src.pipeline import fetch as fetch_mod
 from src.pipeline import split as split_mod
 from src.pipeline import resize as resize_mod
-# from src.pipeline.resize import resize_and_pad_batch
 # from src.pipeline.train import train_model
 # from src.pipeline.evaluate import evaluate_model
 # from src.pipeline.export import export_artifacts
