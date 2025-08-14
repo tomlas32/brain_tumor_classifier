@@ -16,13 +16,14 @@ Usage:
 
 
 Author: Tomasz Lasota
-Date: 2025-0-13
-Version: 1.0    
+Date: 2025-0-14
+Version: 1.1    
 """
 
 
 import argparse
 
+DEFAULT_EXTS = ".png,.jpg,.jpeg,.bmp,.tif,.tiff"
 
 def add_common_logging_args(parser: argparse.ArgumentParser) -> None:
     """Attach standard logging args to any parser."""
@@ -44,18 +45,19 @@ def add_exts_arg(parser):
         "--exts",
         type=str,
         default=".png,.jpg,.jpeg,.bmp,.tif,.tiff",
-        help="Comma-separated extensions (lowercased)."
+        help=("Comma-separated extensions (lowercased)."
+        "Use +ext to add to defaults, e.g. '+webp,+gif'")
     )
 
 
 def parse_exts(exts_str: str) -> set[str]:
-    """
-    Convert a comma-separated extension string into a normalized set.
+    base = {normalize_ext(e) for e in DEFAULT_EXTS.split(",") if e}
+    if exts_str.startswith("+"):
+        extras = {normalize_ext(e) for e in exts_str.split(",") if e}
+        return base | extras
+    else:
+        return {normalize_ext(e) for e in exts_str.split(",") if e}
 
-    Ensures each extension starts with '.', is lowercase, and trims whitespace.
-    """
-    return {
-        (e if e.startswith(".") else f".{e}")
-        for e in (x.strip().lower() for x in exts_str.split(","))
-        if e
-    }
+def normalize_ext(e: str) -> str:
+    e = e.strip().lower()
+    return e if e.startswith(".") else f".{e}"
