@@ -10,6 +10,10 @@ Pools images from --training-dir and --testing-dir, creates a random split with
 - De-duplicates file paths, shuffles with --seed.
 - Ensures at least one test image for any non-empty class.
 - Avoids filename collisions by appending a numeric suffix.
+
+Author: Tomasz Lasota
+Date: 2025-08-14
+Version: 1.0
 """
 
 from pathlib import Path
