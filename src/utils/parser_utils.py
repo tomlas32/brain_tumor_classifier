@@ -34,3 +34,28 @@ def add_common_logging_args(parser: argparse.ArgumentParser) -> None:
                         help="Path to rotating log file. Leave empty for automatic per-script naming.")
 
 
+def add_exts_arg(parser):
+    """
+    Add a --exts argument for specifying allowed file extensions.
+
+    Default: ".png,.jpg,.jpeg,.bmp,.tif,.tiff"
+    """
+    parser.add_argument(
+        "--exts",
+        type=str,
+        default=".png,.jpg,.jpeg,.bmp,.tif,.tiff",
+        help="Comma-separated extensions (lowercased)."
+    )
+
+
+def parse_exts(exts_str: str) -> set[str]:
+    """
+    Convert a comma-separated extension string into a normalized set.
+
+    Ensures each extension starts with '.', is lowercase, and trims whitespace.
+    """
+    return {
+        (e if e.startswith(".") else f".{e}")
+        for e in (x.strip().lower() for x in exts_str.split(","))
+        if e
+    }
