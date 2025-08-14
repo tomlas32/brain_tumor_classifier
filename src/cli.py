@@ -174,8 +174,25 @@ def validate(
     log_file: Optional[str] = None,
 ):
     """
-    Validate resized dataset integrity & consistency before training.
-    Wraps src.pipeline.validate.main(argv) so behavior matches other commands.
+    Validate the integrity and consistency of the resized dataset before training.
+
+    This command wraps `src.pipeline.validate.main(argv)` to match the structure
+    and behavior of other pipeline commands, ensuring consistent logging,
+    argument parsing, and exit code handling across both the CLI and standalone usage.
+
+    Examples
+    --------
+    # Validate using defaults (DATA_DIR/training and latest mapping in outputs/mappings/)
+    python -m src.cli validate
+
+    # Validate with duplicate detection enabled
+    python -m src.cli validate --dup-check
+
+    # Fail if any warnings or errors are found
+    python -m src.cli validate --fail-on warning
+
+    # Validate a custom directory and mapping file
+    python -m src.cli validate --in-dir data/training_resized --index-remap outputs/mappings/my_map.json
     """
     argv = [
         "--in-dir", str(in_dir),
