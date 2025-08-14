@@ -19,7 +19,7 @@ from collections import defaultdict
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args
+from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
 
 log = get_logger(__name__)
 
@@ -73,13 +73,11 @@ def main(argv=None) -> int:
     parser.add_argument("--test-frac", type=float, default=0.20,
                         help="Fraction per class for final test set (0-1).")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed.")
-    parser.add_argument("--exts", type=str,
-                        default=".png,.jpg,.jpeg,.bmp,.tif,.tiff",
-                        help="Comma-separated extensions (lowercased).")
     parser.add_argument("--clear-dest", action="store_true",
                     help="Delete all existing files/dirs in DATA_DIR/training and DATA_DIR/testing before writing.")
     
     add_common_logging_args(parser)  # --log-level, --log-file
+    add_exts_arg(parser)
     args = parser.parse_args(argv)
     
     t0 = time.time()
@@ -87,11 +85,7 @@ def main(argv=None) -> int:
 
     configure_logging(log_level=args.log_level, log_file=args.log_file)
 
-    exts = {
-        (e if e.startswith(".") else f".{e}")
-        for e in (x.strip().lower() for x in args.exts.split(","))
-        if e
-    }
+    exts = parse_exts(args.exts)
 
     dataset_slug = os.getenv("DATASET_SLUG", args.dataset)
     pointer = args.pointer or _pointer_path_for(dataset_slug)
