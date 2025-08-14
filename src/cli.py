@@ -4,7 +4,7 @@ from pathlib import Path
 from src.pipeline import fetch as fetch_mod
 from src.pipeline import split as split_mod
 from src.pipeline import resize as resize_mod
-from src.pipeline.validate import validate_dataset
+from src.pipeline import validate as validate_mod
 # from src.pipeline.train import train_model
 # from src.pipeline.evaluate import evaluate_model
 # from src.pipeline.export import export_artifacts
@@ -160,53 +160,40 @@ def resize(
 @app.command()
 def validate(
     in_dir: Path = DATA_DIR / "training",
-    index_remap: Path = DEFAULT_INDEX_REMAP,  # <- outputs/mappings/latest.json
+    index_remap: Path = DEFAULT_INDEX_REMAP,  # outputs/mappings/latest.json
     size: int = 224,
     exts: str = typer.Option(
         DEFAULT_EXTS,
         help="Comma-separated extensions. Use +ext to add (e.g. '+webp'); use 'all' to accept any."
     ),
-    dup_check: bool = True,
+    dup_check: bool = False,  # default off (hashing can be slow); enable when needed
     fail_on: str = typer.Option("error", help="Fail on: 'error' | 'warning' | 'never'"),
     warn_low_std: float = 3.0,
     min_file_bytes: int = 1024,
+    log_level: str = "INFO",
+    log_file: Optional[str] = None,
 ):
     """
     Validate resized dataset integrity & consistency before training.
-    Uses rotating logs for all issues; exits non-zero per --fail-on policy.
+    Wraps src.pipeline.validate.main(argv) so behavior matches other commands.
     """
-    # Basic guardrails
-    if not in_dir.exists():
-        raise typer.BadParameter(f"--in-dir not found: {in_dir}")
-    if not index_remap.exists():
-        raise typer.BadParameter(f"--index-remap not found: {index_remap}")
+    argv = [
+        "--in-dir", str(in_dir),
+        "--index-remap", str(index_remap),
+        "--size", str(size),
+        "--exts", exts,
+        "--warn-low-std", str(warn_low_std),
+        "--min-file-bytes", str(min_file_bytes),
+        "--fail-on", fail_on,
+        "--log-level", log_level,
+    ]
+    if dup_check:
+        argv += ["--dup-check"]
+    if log_file:
+        argv += ["--log-file", str(log_file)]
 
-    summary = validate_dataset(
-        in_dir=in_dir,
-        index_remap_path=index_remap,   # Path is fine; function handles Path
-        size=size,
-        exts=exts,                      # validate_dataset will parse_exts()
-        dup_check=dup_check,
-        warn_low_std=warn_low_std,
-        min_file_bytes=min_file_bytes,
-    )
-
-    if fail_on not in {"error", "warning", "never"}:
-        raise typer.BadParameter("fail_on must be one of: error | warning | never")
-
-    # Exit policy for CI
-    if fail_on == "error" and summary["errors"] > 0:
-        raise typer.Exit(code=1)
-    if fail_on == "warning" and (summary["errors"] > 0 or summary["warnings"] > 0):
-        raise typer.Exit(code=1)
-
-    # Optional: print a compact human summary to stdout
-    print(
-        f"Validated {summary['scanned']} files | "
-        f"OK: {summary['ok']} | "
-        f"Errors: {summary['errors']} | "
-        f"Warnings: {summary['warnings']}"
-    )
+    code = validate_mod.main(argv)   # calls validate.py main(argv)
+    raise typer.Exit(code)           # propagate exit status to shell/CI
 
 # @app.command()
 # def train(cfg: str = str(CONFIGS_DIR / "train.yaml")):
