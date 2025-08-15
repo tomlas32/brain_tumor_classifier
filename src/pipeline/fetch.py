@@ -1,53 +1,95 @@
+# src/pipeline/fetch.py
 """
 Fetch a Kaggle dataset via KaggleHub with mixed logging (stdout + rotating file).
 
-- Logs key steps and timings to both console and a rotating log file.
-- Keeps pipeline compatibility (stdout) while preserving local logs.
-- Returns the resolved local dataset path on success; raises on failure.
+What this script does
+---------------------
+1) Configures logging so every line carries [fetch|RUN_ID] for easy stitching in Docker/CI.
+2) Downloads a Kaggle dataset into a cache directory (defaults to DATA_DIR).
+3) Writes a handoff JSON pointer under outputs/downloads_pointer/<owner>/<slug>/:
+   - latest.json
+   - timestamped history file
 
-Requirements:
-    pip install kagglehub
-    (and Kaggle API credentials configured)
+Requirements
+------------
+- pip install kagglehub
+- Kaggle API credentials configured (e.g., ~/.kaggle/kaggle.json)
 
-Author: Tomasz Lasota
-Date: 2025-0-13
-Version: 1.2
+Typical pipeline order
+----------------------
+**fetch** → split → resize → validate → train → evaluate
+
+CLI arguments
+-------------
+--dataset STR       Kaggle slug, e.g. 'owner/dataset' (default from configs).
+--cache-dir PATH    Where KaggleHub will cache the download (defaults to DATA_DIR).
+--no-pointer        Skip writing the pointer JSONs (latest + history).
+--pointer-dir PATH  Override destination dir for pointer JSONs.
+--log-level LEVEL   DEBUG|INFO|WARNING|ERROR|CRITICAL (default: INFO).
+--log-file PATH     If set, use a fixed log file; otherwise auto per-script under outputs/logs/.
+
+Exit codes
+----------
+0  Success
+1  Failure (exception during download or pointer write)
+
+Examples
+--------
+# Basic usage with defaults
+python -m src.pipeline.fetch
+
+# Custom dataset slug and cache dir
+python -m src.pipeline.fetch --dataset owner/name --cache-dir data
+
+# Write handoff pointer into a custom folder
+python -m src.pipeline.fetch --pointer-dir outputs/pointers/my_exp
 """
 
+from __future__ import annotations
 
-import kagglehub, os, time, argparse, json
+import argparse, json, os, time
+from datetime import datetime, timezone
 from pathlib import Path
+
+import kagglehub
+
+from src.utils.configs import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args
-from datetime import datetime, timezone
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
-from src.utils.configs import DEFAULT_DATASET
 
 log = get_logger(__name__)
 POINTER_DIR = OUTPUTS_DIR / "downloads_pointer"
 
-def _find_subdir(root: Path, name: str) -> Path:
-    """Return root/name; if not present, try case-insensitive match among subdirs."""
 
+# ------------------------------ helpers ------------------------------
+
+def _find_subdir(root: Path, name: str) -> Path:
+    """
+    Return root/name; if absent, try a case-insensitive match among subdirs.
+
+    Raises
+    ------
+    FileNotFoundError, NotADirectoryError
+    """
     if not root.exists():
         log.error("find_subdir.missing_root", extra={"root": str(root), "name": name})
         raise FileNotFoundError(f"Root does not exist: {root}")
     if not root.is_dir():
         log.error("find_subdir.not_a_dir", extra={"root": str(root), "name": name})
         raise NotADirectoryError(str(root))
-    
+
     target_path = root / name
     log.debug("find_subdir.start", extra={"root": str(root), "name": name, "target_path": str(target_path)})
 
-    # 1) Exact match
+    # Exact match
     if target_path.is_dir():
-        log.info("find_subdir: found", extra={"target_path": str(target_path)})
+        log.info("find_subdir.found", extra={"target_path": str(target_path)})
         return target_path
-    
-    # 2) Case-insensitive match
+
+    # Case-insensitive match
     try:
-        subdirs = sorted((p for p in root.iterdir() if p.is_dir()),
-                         key=lambda p: p.name.casefold())
+        subdirs = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name.casefold())
     except OSError as e:
         log.error("find_subdir.iter_error", extra={"root": str(root), "error": str(e)})
         raise
@@ -59,23 +101,43 @@ def _find_subdir(root: Path, name: str) -> Path:
         return match
 
     available = [p.name for p in subdirs]
-    log.error("find_subdir.not_found",
-              extra={"root": str(root), "name": name, "available": available})
+    log.error("find_subdir.not_found", extra={"root": str(root), "name": name, "available": available})
     raise FileNotFoundError(f"Expected subdir '{name}' under {root}; available: {available}")
 
-def write_latest_fetch_json(dataset: str, dataset_root: Path, cache_dir: Path,
-                            dst_dir: Path | None = None) -> Path:
-    
+
+def write_latest_fetch_json(
+    dataset: str,
+    dataset_root: Path,
+    cache_dir: Path,
+    dst_dir: Path | None = None,
+) -> Path:
+    """
+    Write a handoff JSON describing the fetched dataset (latest + history).
+
+    Fields
+    ------
+    dataset        Kaggle slug (owner/slug) used for download
+    version        Integer if root directory is a pure 'vNN' string, otherwise folder name
+    dataset_root   Absolute path to the local dataset root returned by KaggleHub
+    training_dir   Path to the 'Training' subfolder (case-insensitive search)
+    testing_dir    Path to the 'Testing' subfolder (case-insensitive search)
+    cache_dir      Absolute path to the chosen cache directory
+    fetched_at     ISO-8601 UTC timestamp of when the pointer was written
+
+    Returns
+    -------
+    Path to latest.json
+    """
     dataset_root = Path(dataset_root).resolve()
     training_dir = _find_subdir(dataset_root, "Training")
     testing_dir  = _find_subdir(dataset_root, "Testing")
 
-    # parse dataset name and version
+    # Parse dataset name and a simple version from folder name (e.g., 'v2' → 2)
     root_name = dataset_root.name
-    ver_str = root_name.lstrip("vV") # in case it starts with 'v' or 'V'
+    ver_str = root_name.lstrip("vV")
     version = int(ver_str) if ver_str.isdigit() else root_name
 
-    # organise pointers by Kaggle slug
+    # Organize pointers by Kaggle slug
     try:
         owner, slug = dataset.split("/", 1)
     except ValueError:
@@ -88,88 +150,105 @@ def write_latest_fetch_json(dataset: str, dataset_root: Path, cache_dir: Path,
         "training_dir": str(training_dir),
         "testing_dir":  str(testing_dir),
         "cache_dir":    str(Path(cache_dir).resolve()),
-        "fetched_at":   datetime.now(timezone.utc).isoformat()
+        "fetched_at":   datetime.now(timezone.utc).isoformat(),
     }
 
     pointer_base = (dst_dir or (POINTER_DIR / owner / slug))
     pointer_base.mkdir(parents=True, exist_ok=True)
 
-    # paths
-    latest_path   = pointer_base / "latest.json"
+    latest_path  = pointer_base / "latest.json"
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    history_path  = pointer_base / f"{ts}__v{version}.json"
+    history_path = pointer_base / f"{ts}__v{version}.json"
 
-    # write both
-    with latest_path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     log.info("handoff_written.latest", extra={"path": str(latest_path)})
 
-    with history_path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    history_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     log.info("handoff_written.history", extra={"path": str(history_path)})
 
-    
     return latest_path
 
-# Parser with additional args for kagglehub
+
 def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
+    """
+    CLI for KaggleHub fetch.
+
+    Examples
+    --------
+    python -m src.pipeline.fetch --dataset owner/name
+    python -m src.pipeline.fetch --cache-dir data --no-pointer
+    """
     parser = argparse.ArgumentParser(description="Fetch Kaggle dataset with KaggleHub")
     parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
-                        help=f"Default: {DEFAULT_DATASET}")
+                        help=f"Kaggle slug, e.g. 'owner/dataset' (default: {DEFAULT_DATASET})")
     parser.add_argument("--cache-dir", type=Path, default=DATA_DIR,
-                        help="Directory to store the downloaded dataset")
+                        help="Directory to store the downloaded dataset (default: DATA_DIR)")
     parser.add_argument("--no-pointer", action="store_true",
                         help="Skip writing outputs/downloads_pointer/.../latest.json")
     parser.add_argument("--pointer-dir", type=Path, default=None,
                         help="Override destination directory for pointer JSONs")
-    add_common_logging_args(parser)
+    add_common_logging_args(parser)  # --log-level, --log-file
     return parser
 
-# Fetch a Kaggle dataset
-def fetch_kaggle(dataset: str = DEFAULT_DATASET,
-                 cache_dir: Path | None = None) -> Path:
-    
-    """
-     Downloads a dataset via KaggleHub into `cache_dir` and returns the local path.
-    """
 
+# ------------------------------ core logic ------------------------------
+
+def fetch_kaggle(
+    dataset: str = DEFAULT_DATASET,
+    cache_dir: Path | None = None,
+) -> Path:
+    """
+    Download a Kaggle dataset via KaggleHub into `cache_dir` and return the local path.
+
+    Notes
+    -----
+    - Sets the env var KAGGLEHUB_CACHE to the chosen cache_dir so KaggleHub uses it.
+    - Emits a short stdout message (for simple pipelines) and detailed logs.
+    """
     t0 = time.time()
     cache_dir = DATA_DIR if cache_dir is None else Path(cache_dir)
 
     try:
-        # Set custom kaggle data download destination directory
-        log.info("fetch_kaggle:start", extra={"dataset": dataset, "cache_dir": str(cache_dir)})
+        log.info("fetch_kaggle.start", extra={"dataset": dataset, "cache_dir": str(cache_dir)})
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Point KaggleHub cache to data directory
+        # Point KaggleHub to our cache dir
         os.environ["KAGGLEHUB_CACHE"] = str(cache_dir.resolve())
         print(f"Downloading dataset '{dataset}' to: {cache_dir.resolve()}")
         log.debug("env_set", extra={"KAGGLEHUB_CACHE": os.environ["KAGGLEHUB_CACHE"]})
 
-        log.info("download_begin", extra={"dataset": dataset})
+        log.info("download.begin", extra={"dataset": dataset})
         path = kagglehub.dataset_download(dataset)
         local_path = Path(path).resolve()
 
         elapsed = round(time.time() - t0, 2)
-        log.info("download_success", extra={"local_path": str(local_path), "elapsed_s": elapsed})
+        log.info("download.success", extra={"local_path": str(local_path), "elapsed_s": elapsed})
         return local_path
 
-    except Exception as e:
+    except Exception:
         elapsed = round(time.time() - t0, 2)
-        log.error("download_failed", extra={"elapsed_s": elapsed}, exc_info=True)
+        log.error("download.failed", extra={"elapsed_s": elapsed}, exc_info=True)
         raise
 
+
+# ------------------------------ entry point ------------------------------
+
 def main(argv=None) -> int:
-
+    """
+    Entry:
+    - Parse CLI and configure logging with [fetch|RUN_ID].
+    - Download the dataset and (optionally) write the handoff pointer JSONs.
+    """
     parser = make_parser_fetch_kaggle()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    # Logging: auto file per script by default; fixed if user passes --log-file; stdout always on
-    if args.log_file:  # user provided a path → fixed mode
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file)
-    else:              # default → auto per-script name in outputs/logs/
-        configure_logging(log_level=args.log_level, file_mode="auto")
-    
+    # Run-aware logging (ties logs across stages)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    if args.log_file:
+        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="fetch")
+    else:
+        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="fetch")
+
     try:
         target = fetch_kaggle(dataset=args.dataset, cache_dir=Path(args.cache_dir))
         if not args.no_pointer:
@@ -177,21 +256,15 @@ def main(argv=None) -> int:
                 dataset=args.dataset,
                 dataset_root=target,
                 cache_dir=Path(args.cache_dir),
-                dst_dir=args.pointer_dir,   # <- NEW
+                dst_dir=args.pointer_dir,
             )
-        print(target)
-        return 0 # --> success
+        print(target)  # keep simple stdout output for shell pipelines
+        return 0
 
     except Exception as e:
-        log.error(f"Fetch failed: {e}", exc_info=True)
-        return 1  # failure
+        log.error("fetch.failed", extra={"error": str(e)}, exc_info=True)
+        return 1
+
 
 if __name__ == "__main__":
-
     raise SystemExit(main())
-    
-
-    
-    
-    
-
