@@ -1,5 +1,45 @@
+"""
+Train a CNN on resized MRI images (brain tumor classifier).
+
+This script:
+1) Loads a resized, class-structured training dataset (from `resize.py`).
+2) Verifies class mapping against `index_remap.json` written by `split.py`.
+3) Creates a stratified train/val split with deterministic seeding.
+4) Trains a ResNet (18/34/50) with AMP, StepLR, and AdamW.
+5) Saves only the single best checkpoint (by validation F1) and a summary JSON.
+
+Key design choices
+------------------
+- Strict mapping verification: training *must* match `index_remap.json`.
+- Run-aware logging: every log line includes [stage|run_id] for Docker/CI stitching.
+- Single source of truth: mapping read/verify/copy comes from `src.core.mapping`.
+
+Typical pipeline order
+----------------------
+fetch → split → resize → validate → **train** → evaluate
+
+Examples
+--------
+# minimal (defaults)
+python -m src.pipeline.train
+
+# custom epochs / lr and output dirs
+python -m src.pipeline.train --epochs 20 --lr 3e-4 --out-models models/brain_tumor
+
+# explicit resized roots
+python -m src.pipeline.train --train-in data/training_resized
+
+# explicit mapping file (otherwise uses outputs/mappings/latest.json)
+python -m src.pipeline.train --index-remap outputs/mappings/latest.json
+"""
+
+
+
+from __future__ import annotations
+
 from pathlib import Path
-import argparse, time, json, copy, math, random, shutil
+import argparse, time, json, copy, math, random, os
+from datetime import datetime, timezone
 import numpy as np
 
 from sklearn.model_selection import StratifiedShuffleSplit
@@ -21,8 +61,14 @@ from src.utils.parser_utils import (
     add_common_train_args,
     add_model_args,
 )
-from src.utils.paths import OUTPUTS_DIR
 from src.pipeline.evaluate import evaluate
+from src.core.mapping import (
+    read_index_remap,
+    expected_classes_from_remap,
+    verify_dataset_classes,
+    default_index_remap_path,
+    copy_index_remap,
+)
 
 log = get_logger(__name__)
 
@@ -31,6 +77,9 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
 
 def set_seed(seed: int) -> None:
+    """
+    Make results reproducible across Python/NumPy/PyTorch (CPU & CUDA).
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -39,6 +88,9 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 def log_env_once():
+    """
+    Emit one-time environment info (framework versions, CUDA availability).
+    """
     log.info("env.versions", extra={
         "torch": torch.__version__,
         "torchvision": torchvision.__version__,
@@ -48,6 +100,9 @@ def log_env_once():
     })
 
 def get_env_info() -> dict:
+    """
+    Return a dict suitable for serializing into the training summary.
+    """
     return {
         "torch": torch.__version__,
         "torchvision": torchvision.__version__,
@@ -57,7 +112,9 @@ def get_env_info() -> dict:
     }
 
 def worker_init_fn(worker_id: int):
-    # Make each DataLoader worker deterministically seeded
+    """
+    Deterministic DataLoader workers (seed NumPy & random per-worker).
+    """
     base_seed = torch.initial_seed() % (2**32)
     np.random.seed(base_seed + worker_id)
     random.seed(base_seed + worker_id)
@@ -72,12 +129,42 @@ def write_training_summary(
     best_epoch: int,
     ckpt_path: Path,
     mapping_src: Path,
+    *,
+    run_id: str | None = None,
 ):
+    """
+    Write a self-contained JSON summary of the training run and copy `index_remap.json`
+    next to the checkpoint for airtight traceability.
+
+    Parameters
+    ----------
+    out_summary_dir : Path
+        Destination directory for the summary JSON.
+    args_namespace : argparse.Namespace
+        CLI args (will be serialized).
+    class_names : list[str]
+        Ordered class names used by the model.
+    class_to_idx : dict[str,int]
+        Mapping from class name to label index.
+    per_class_counts : dict[str,int]
+        Counts of training samples per class (pre split into train/val).
+    best_f1 : float
+        Best validation macro F1 achieved.
+    best_epoch : int
+        Epoch where best F1 occurred.
+    ckpt_path : Path
+        Path to the saved best checkpoint (.pth).
+    mapping_src : Path
+        Path to the index_remap used for this run.
+    run_id : str | None
+        Optional run identifier to include in the manifest.
+    """
     out_summary_dir.mkdir(parents=True, exist_ok=True)
     summary_path = out_summary_dir / "training_summary.json"
 
     summary = {
         "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "run_id": run_id,
         "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args_namespace).items()},
         "class_names": class_names,
         "class_to_idx": class_to_idx,
@@ -96,13 +183,13 @@ def write_training_summary(
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-    # Copy mapping next to the checkpoint for airtight traceability
+    # Copy mapping next to the checkpoint (shared helper)
     try:
-        if mapping_src and mapping_src.exists():
-            shutil.copy2(mapping_src, ckpt_path.parent / mapping_src.name)
+        if mapping_src and Path(mapping_src).exists():
+            copy_index_remap(mapping_src, ckpt_path.parent)
             log.info("mapping_copied", extra={
                 "from": str(mapping_src),
-                "to": str((ckpt_path.parent / mapping_src.name))
+                "to": str(ckpt_path.parent / "index_remap.json")
             })
     except Exception as e:
         log.warning("mapping_copy_failed", extra={"error": str(e)})
@@ -113,24 +200,26 @@ def make_parser_train() -> argparse.ArgumentParser:
     """
     Create CLI parser for the training step.
 
-    Examples:
-      # minimal (uses defaults)
-      python -m src.training.train
+    Examples
+    --------
+    # minimal (uses defaults)
+    python -m src.pipeline.train
 
-      # custom epochs / lr and save models to a custom dir
-      python -m src.training.train --epochs 20 --lr 3e-4 --out-models models/brain_tumor
+    # custom epochs / lr and save models to a custom dir
+    python -m src.pipeline.train --epochs 20 --lr 3e-4 --out-models models/brain_tumor
 
-      # point to specific resized folders
-      python -m src.training.train --train-in data/training_resized --test-in data/testing_resized
+    # point to specific resized folders
+    python -m src.pipeline.train --train-in data/training_resized --test-in data/testing_resized
     """
     parser = argparse.ArgumentParser(description="Train a CNN on resized MRI images.")
     parser.add_argument("--image-size", type=int, default=224,
                         help="Square size after resize/pad (must match your preprocessing)")
-    add_common_dataset_args(parser)
-    add_common_train_args(parser)
-    add_model_args(parser)
-    add_common_logging_args(parser)
-
+    add_common_dataset_args(parser)   # roots, batch size, workers, val_frac, seed, out dirs, etc.
+    add_common_train_args(parser)     # epochs, lr, weight_decay, scheduler, amp, etc.
+    add_model_args(parser)            # model name + pretrained flag
+    add_common_logging_args(parser)   # log level/file
+    parser.add_argument("--index-remap", type=Path, default=None,
+                        help="Path to index_remap.json (defaults to outputs/mappings/latest.json)")
     return parser
 
 
@@ -138,11 +227,15 @@ def build_transforms(image_size: int) -> dict[str, transforms.Compose]:
     """
     Build torchvision transforms for train/val/test sets.
 
-    Args:
-        image_size: Target square size after resize/pad.
+    Args
+    ----
+    image_size : int
+        Target square size after resize/pad.
 
-    Returns:
-        dict with keys 'train', 'val', 'test' and corresponding transform pipelines.
+    Returns
+    -------
+    dict[str, transforms.Compose]
+        Keys 'train', 'val', 'test' with transform pipelines.
     """
     return {
         "train": transforms.Compose([
@@ -172,58 +265,54 @@ def make_stratified_subsets(
     tf_val,
     val_frac: float,
     seed: int,
-    index_remap_path: Path,
-) -> tuple[Subset, Subset, list[str], dict[str, int], dict[str, int]]: 
+    index_remap_path: Path | None,
+) -> tuple[Subset, Subset, list[str], dict[str, int], dict[str, int]]:
     """
     Create stratified train/val subsets from a class-structured image root,
-    verifying that the class mapping matches index_remap.json and logging per-class counts.
+    verifying that the class mapping matches `index_remap.json` and logging per-class counts.
 
-    Args:
-        training_dir: Path to the resized training directory.
-        tf_train: torchvision transform pipeline for training set.
-        tf_val: torchvision transform pipeline for validation set.
-        val_frac: Fraction of total data to reserve for validation (per class).
-        seed: Random seed for reproducibility.
-        index_remap_path: Path to index_remap.json from split.py.
+    Args
+    ----
+    training_dir : Path
+        Path to the resized training directory.
+    tf_train : transforms.Compose
+        Transform pipeline for training set.
+    tf_val : transforms.Compose
+        Transform pipeline for validation set.
+    val_frac : float
+        Fraction of total data to reserve for validation (per class).
+    seed : int
+        RNG seed for reproducibility.
+    index_remap_path : Path | None
+        Path to `index_remap.json` (if None, uses `outputs/mappings/latest.json`).
 
-    Returns:
-        (train_data, val_data, class_names (ordered), class_to_idx, per_class_counts)
+    Returns
+    -------
+    (train_data, val_data, class_names, class_to_idx, per_class_counts)
     """
-    index_remap_path = Path(index_remap_path)
-    if not index_remap_path.exists():
-        raise FileNotFoundError(f"index_remap.json not found: {index_remap_path}")
-    log.info("class_mapping.read", extra={"index_remap_path": str(index_remap_path)})
+    # Resolve mapping path and read/validate via shared core
+    mapping_path = index_remap_path or default_index_remap_path()
+    log.info("class_mapping.read", extra={"index_remap_path": str(mapping_path)})
 
-    # Load mapping from JSON
-    idx_to_class = json.loads(index_remap_path.read_text(encoding="utf-8"))
-    expected_classes = [cls for _, cls in sorted(idx_to_class.items(), key=lambda x: int(x[0]))]
+    idx_to_class = read_index_remap(mapping_path)                                  # shared reader
+    expected_classes = expected_classes_from_remap(idx_to_class)                   # ordered classes
 
-    # Load full training set with train transforms
+    # Load full training set using the *train* transforms to compute labels
     full_train = ImageFolder(training_dir, transform=tf_train)
 
-    # Verify mapping matches exactly
-    if full_train.classes != expected_classes:
-        log.error("class_mapping_mismatch", extra={
-            "expected": expected_classes,
-            "found": full_train.classes
-        })
-        raise RuntimeError(
-            "Class mapping in dataset does not match index_remap.json. "
-            f"Expected: {expected_classes}, Found: {full_train.classes}"
-        )
-    
-    # Count samples per class (useful for debugging/traceability)
+    # Strict verification for training
+    verify_dataset_classes(full_train.classes, expected_classes, strict=True)      # raises on mismatch
+
+    # Counts per class
     per_class_counts = {cls: 0 for cls in expected_classes}
     for _, y in full_train.samples:
         per_class_counts[expected_classes[y]] += 1
 
-    # Fail fast if any class is empty
     empties = [c for c, n in per_class_counts.items() if n == 0]
     if empties:
         log.error("empty_classes_detected", extra={"empty_classes": empties, "counts": per_class_counts})
         raise RuntimeError(f"Empty classes found in training data: {empties}")
 
-    # Log verified mapping and distribution
     log.info("class_mapping_verified", extra={"classes": expected_classes})
     log.info("class_distribution", extra={"per_class_counts": per_class_counts})
 
@@ -233,26 +322,20 @@ def make_stratified_subsets(
     train_idx, val_idx = next(splitter.split(np.zeros(len(y)), y))
 
     train_data = Subset(full_train, train_idx)
-
-    # Validation dataset with val transforms
+    # Re-create for val to apply val transforms
     val_full = ImageFolder(training_dir, transform=tf_val)
     val_data = Subset(val_full, val_idx)
 
     return train_data, val_data, full_train.classes, full_train.class_to_idx, per_class_counts
 
 
-def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed:int) -> DataLoader:
+def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed: int) -> DataLoader:
     """
-    Create a DataLoader with common settings for this project.
+    Create a DataLoader with consistent, deterministic settings.
 
-    Args:
-        dataset: A PyTorch Dataset or Subset.
-        batch_size: Number of samples per batch.
-        shuffle: Whether to shuffle the data at the start of each epoch.
-        num_workers: Number of subprocesses to use for data loading.
-
-    Returns:
-        A DataLoader instance.
+    Returns
+    -------
+    DataLoader
     """
     generator = torch.Generator()
     generator.manual_seed(seed)
@@ -263,8 +346,8 @@ def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed:
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=(num_workers > 0),
-        worker_init_fn=worker_init_fn,   
-        generator=generator,             
+        worker_init_fn=worker_init_fn,
+        generator=generator,
     )
 
     log.info("dataloader_created", extra={
@@ -273,7 +356,6 @@ def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed:
         "shuffle": shuffle,
         "num_workers": num_workers
     })
-
     return loader
 
 
@@ -281,13 +363,16 @@ def build_model(model_name: str, num_classes: int, pretrained: bool = True) -> n
     """
     Build a ResNet model with the final layer replaced for the given number of classes.
 
-    Args:
-        model_name: One of 'resnet18', 'resnet34', 'resnet50'.
-        num_classes: Number of output classes.
-        pretrained: Whether to load ImageNet weights.
+    Args
+    ----
+    model_name : {'resnet18','resnet34','resnet50'}
+    num_classes : int
+    pretrained : bool
 
-    Returns:
-        A PyTorch nn.Module ready for training.
+    Returns
+    -------
+    nn.Module
+        A PyTorch model ready for training.
     """
     model_name = model_name.lower()
 
@@ -303,7 +388,6 @@ def build_model(model_name: str, num_classes: int, pretrained: bool = True) -> n
     else:
         raise ValueError(f"Unsupported model_name: {model_name}")
 
-    # Replace final FC layer
     in_features = model.fc.in_features
     model.fc = nn.Linear(in_features, num_classes)
 
@@ -312,43 +396,30 @@ def build_model(model_name: str, num_classes: int, pretrained: bool = True) -> n
         "pretrained": pretrained,
         "num_classes": num_classes
     })
-
     return model
 
 
 
 def train_loop(
     model: nn.Module,
-    train_loader,
-    val_loader,
-    device,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    device: torch.device,
     epochs: int,
     lr: float,
     weight_decay: float,
     step_size: int,
     gamma: float,
     amp: bool,
-    out_dir,
+    out_dir: Path,
 ):
     """
-    Full training loop for classification models.
-    Saves only the single best weights file at the end of training.
+    Full training loop for classification models. Saves only the single best
+    weights file at the end of training (by validation F1).
 
-    Args:
-        model: The model to train.
-        train_loader: DataLoader for training data.
-        val_loader: DataLoader for validation data.
-        device: torch.device ("cpu" or "cuda").
-        epochs: Number of training epochs.
-        lr: Learning rate.
-        weight_decay: Weight decay (L2 regularization).
-        step_size: StepLR step size in epochs.
-        gamma: StepLR gamma decay factor.
-        amp: Use automatic mixed precision (AMP).
-        out_dir: Directory to save best model weights.
-
-    Returns:
-        best_f1, best_epoch
+    Returns
+    -------
+    (best_f1, best_epoch, ckpt_path)
     """
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(
@@ -388,14 +459,11 @@ def train_loop(
         # ---- Validation ----
         val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, device)
 
-        # Track best
         if val_f1 > best_f1:
             best_f1 = val_f1
             best_epoch = epoch
             best_wts = copy.deepcopy(model.state_dict())
-            log.info("best_updated", extra={
-                "epoch": best_epoch, "best_f1": round(best_f1, 4)
-            })
+            log.info("best_updated", extra={"epoch": best_epoch, "best_f1": round(best_f1, 4)})
 
         dt = time.time() - t0
         log.info("epoch_end", extra={
@@ -410,48 +478,53 @@ def train_loop(
             "best_epoch": best_epoch
         })
 
-    # ---- Save only the best model at the end ----
-    ckpt_path = out_dir / f"best_valF1_{best_f1:.4f}_epoch{best_epoch}.pth"  # checkpoint path
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = out_dir / f"best_valF1_{best_f1:.4f}_epoch{best_epoch}.pth"
     torch.save(best_wts, ckpt_path)
     log.info("checkpoint_saved", extra={"path": str(ckpt_path)})
 
-    # Load best weights back into the model
     model.load_state_dict(best_wts)
-
     return best_f1, best_epoch, ckpt_path
 
 
 def main(argv=None) -> int:
-    # ---- Parse CLI args ----
+    """
+    CLI entry point:
+    - Parses args and configures logging (with RUN_ID + stage='train').
+    - Verifies mapping, builds loaders, model, and trains.
+    - Writes a summary and copies mapping next to the checkpoint.
+    """
     parser = make_parser_train()
     args = parser.parse_args(argv)
 
-    # ---- Configure logging ----
+    # Run-aware logging (ties logs across stages)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file)
+        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="train")
     else:
-        configure_logging(log_level=args.log_level, file_mode="auto")
+        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="train")
 
-    # ---- Device ----
+    # Device & env
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info("device_selected", extra={"device": str(device)})
 
-    set_seed(args.seed)      # Set seed
-    log_env_once()  
+    set_seed(args.seed)
+    log_env_once()
 
-    # ---- Transforms ----
+    # Transforms
     tfs = build_transforms(args.image_size)
 
-    mapping_path = OUTPUTS_DIR / "mappings" / "latest.json"
+    # Mapping path (default to outputs/mappings/latest.json)
+    mapping_path = args.index_remap or default_index_remap_path()
 
-    # ---- Train/Val subsets ----
+    # Train/Val subsets (strict mapping verification)
     train_data, val_data, class_names, class_to_idx, per_class_counts = make_stratified_subsets(
         training_dir=args.train_in,
         tf_train=tfs["train"],
         tf_val=tfs["val"],
         val_frac=args.val_frac,
         seed=args.seed,
-        index_remap_path=mapping_path
+        index_remap_path=mapping_path,
     )
 
     log.info("class_mapping", extra={
@@ -461,15 +534,15 @@ def main(argv=None) -> int:
     })
     log.info("class_distribution", extra={"per_class_counts": per_class_counts})
 
-    # ---- Loaders ----
-    train_loader = make_loader(train_data, args.batch_size, shuffle=True, num_workers=args.num_workers, seed=args.seed)
+    # Loaders
+    train_loader = make_loader(train_data, args.batch_size, shuffle=True,  num_workers=args.num_workers, seed=args.seed)
     val_loader   = make_loader(val_data,   args.batch_size, shuffle=False, num_workers=args.num_workers, seed=args.seed)
 
-    # ---- Model ----
+    # Model
     num_classes = len(class_names)
     model = build_model(args.model, num_classes=num_classes, pretrained=args.pretrained).to(device)
 
-    # ---- Train ----
+    # Train
     args.out_models.mkdir(parents=True, exist_ok=True)
     best_f1, best_epoch, ckpt_path = train_loop(
         model=model,
@@ -492,7 +565,6 @@ def main(argv=None) -> int:
     })
     print(f"✅ Training complete. Best F1={best_f1:.4f} at epoch {best_epoch}")
 
-
     write_training_summary(
         out_summary_dir=args.out_summary,
         args_namespace=args,
@@ -503,8 +575,8 @@ def main(argv=None) -> int:
         best_epoch=best_epoch,
         ckpt_path=ckpt_path,
         mapping_src=mapping_path,
+        run_id=run_id,
     )
-
     return 0
 
 if __name__ == "__main__":
