@@ -307,8 +307,14 @@ def main(argv=None) -> int:
                         help="Warn if file size is below this many bytes")
     parser.add_argument("--fail-on", choices=["error", "warning", "never"], default="error",
                         help="Exit with nonzero code if these severities occur")
-    parser.add_argument("--write-report", action="store_true", default=True,
-                        help="Write the validation summary JSON to outputs/validation_reports/")
+    parser.add_argument(
+    "--no-write-report",
+    dest="write_report",
+    action="store_false",
+    help="Disable writing a JSON validation report to outputs/validation_reports/ (enabled by default).",
+)
+    # default ON
+    parser.set_defaults(write_report=True)
 
     # shared logging flags: --log-level, --log-file
     add_common_logging_args(parser)
@@ -344,10 +350,10 @@ def main(argv=None) -> int:
 
     if args.write_report:
         VALIDATION_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_path = VALIDATION_REPORTS_DIR / f"validation_{ts}.json"
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+        report_path = VALIDATION_REPORTS_DIR / f"validation_{run_id}_{ts}.json"
         with open(report_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2, ensure_ascii=False)
         log.info("validation_report_written", extra={"path": str(report_path)})
 
     # Compact human summary to stdout
