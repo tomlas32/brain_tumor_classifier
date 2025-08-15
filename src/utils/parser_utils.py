@@ -122,9 +122,7 @@ def add_common_train_args(parser: argparse.ArgumentParser) -> argparse.ArgumentP
 def add_model_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--model", choices=["resnet18", "resnet34", "resnet50"], default="resnet18")
     parser.add_argument("--pretrained", action="store_true", default=True,
-                        help="Use ImageNet weights (default: True)")
-    parser.add_argument("--no-pretrained", dest="pretrained", action="store_false",
-                        help="Disable pretrained weights")
+                        help="Use ImageNet pretrained weights (opt-in)")
     parser.add_argument("--out-models", type=Path, default=MODELS_DIR,
                         help="Directory to save best weights (default: models/)")
     parser.add_argument("--out-summary", type=Path, default=OUTPUTS_DIR / "training",
@@ -141,4 +139,13 @@ def add_common_dataset_args(parser: argparse.ArgumentParser) -> argparse.Argumen
                         help="Optional 'original' external test set root (class subfolders)")
     parser.add_argument("--val-frac", type=float, default=0.20,
                         help="Validation fraction taken from --train-in (stratified)")
+    return parser
+
+
+def add_common_eval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--eval-in", type=Path, default=DATA_DIR / "testing_resized",
+                        help="Input root with class subfolders for evaluation (default: data/testing_resized)")
+    parser.add_argument("--eval-out", type=Path, default=OUTPUTS_DIR / "evaluation",
+                        help="Output directory for evaluation (default: outputs/evaluation)")
+    parser.add_argument("--trained-model", type=Path)
     return parser
