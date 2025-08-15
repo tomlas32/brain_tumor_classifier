@@ -42,6 +42,7 @@ from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
 from src.utils.paths import OUTPUTS_DIR
 from src.core.env import bootstrap_env, log_env_once
 from src.evaluate.runner import EvalRunnerInputs, run as run_evaluation
+from src.core.config import build_eval_config, to_dict
 
 log = get_logger(__name__)
 
@@ -66,6 +67,10 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--config", type=Path, default=None,
+                    help="Optional YAML config file for evaluation.")
+    parser.add_argument("--override", action="append", default=[],
+                        help="Override config values: key=val (e.g., io.top_per_class=8)")
     parser.add_argument(
         "--mapping-path",
         type=Path,
@@ -117,6 +122,9 @@ def main(argv=None):
 
     bootstrap_env(seed=args.seed)
     log_env_once()
+
+    cfg = build_eval_config(args.config, overrides=args.override)
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     inputs = EvalRunnerInputs(
         image_size=args.image_size,
