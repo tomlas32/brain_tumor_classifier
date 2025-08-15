@@ -158,7 +158,14 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     device = get_device(prefer_cuda=True)
 
     # Transforms
-    tfs = build_transforms(inputs.image_size)
+    aug_cfg = inputs.args_dict.get("aug", {})  # dict from config
+    tfs = build_transforms(
+        inputs.image_size,
+        rotate_deg=aug_cfg.get("rotate_deg", 15),
+        hflip_prob=aug_cfg.get("hflip_prob", 0.5),
+        jitter_brightness=aug_cfg.get("jitter_brightness", 0.1),
+        jitter_contrast=aug_cfg.get("jitter_contrast", 0.1),
+    )
 
     # Mapping (strict for training)
     mapping_path = inputs.index_remap or default_index_remap_path()
