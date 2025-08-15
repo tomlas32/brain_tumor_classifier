@@ -25,6 +25,7 @@ from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
+from src.core.mapping import write_index_remap as mapping_write_index_remap, copy_index_remap
 
 log = get_logger(__name__)
 
@@ -86,100 +87,46 @@ def _check_subset_classes(root: Path, expected: set[str], subset: str) -> tuple[
     extra = found - expected
     return missing, extra
 
-def write_index_remap(
+
+def _build_and_write_mapping(
     split_root: Path,
     *,
     prefer_subset: str = "training",
-    use_outputs_dir: bool = True,
-    use_dataset_subdir: bool = False,   # set True to mirror fetch.py owner/slug layout
-    dataset: str | None = None,         # required if use_dataset_subdir=True
-    # ---- optional extra copies (off by default) ----
-    write_split_copy: bool = False,     # write split_root / index_remap.json
+    dataset: str | None = None,
+    use_dataset_subdir: bool = False,
+    write_split_copy: bool = False,
     also_save_project_root: bool = False,
     project_root_path: Path = Path("index_remap.json"),
 ) -> Path:
-    """
-    Create and save a deterministic index_remap.json from folders in split_root/{prefer_subset}.
-
-    Primary location (recommended):
-      - outputs/mappings[/<owner>/<slug>]/latest.json  (and a timestamped history file)
-
-    Optional extra copies:
-      - split_root/index_remap.json (if write_split_copy=True)
-      - project_root_path (if also_save_project_root=True)
-
-    Validates that other subsets (e.g., 'testing') have the same class set.
-    Returns the path to the 'latest.json' written under outputs/mappings (or the split copy if
-    use_outputs_dir=False).
-    """
-    # 1) Collect and validate classes
+    # 1) get ordered classes from prefer_subset
     classes = _class_names_from_dir(split_root / prefer_subset)
     if not classes:
         msg = f"No class folders found under {split_root / prefer_subset}"
         log.error("split.index_remap.no_classes", extra={"subset": prefer_subset, "path": str(split_root)})
         raise RuntimeError(msg)
 
-    expected = set(classes)
+    # 2) verify other subsets share the same set
     for subset in ("testing",):
-        missing, extra = _check_subset_classes(split_root, expected, subset)
+        missing, extra = _check_subset_classes(split_root, set(classes), subset)
         if missing or extra:
             msg = f"Class mismatch in '{subset}' vs '{prefer_subset}': missing={sorted(missing)} extra={sorted(extra)}"
             log.error("split.class_mismatch", extra={"subset": subset, "message": msg})
             raise RuntimeError(msg)
 
-    # 2) Build mapping
-    index_remap = {str(i): cls for i, cls in enumerate(classes)}
+    # 3) write via shared core mapping
+    latest_path = mapping_write_index_remap(
+        classes,
+        dataset=dataset,
+        use_dataset_subdir=use_dataset_subdir,
+    )
 
-    # 3) Decide primary destination
-    if use_outputs_dir:
-        # Base: outputs/mappings[/<owner>/<slug>]
-        base = OUTPUTS_DIR / "mappings"
-        if use_dataset_subdir:
-            if not dataset:
-                raise ValueError("dataset must be provided when use_dataset_subdir=True")
-            owner, slug = (dataset.split("/", 1) if "/" in dataset else ("unknown", dataset))
-            base = base / owner / slug
-        base.mkdir(parents=True, exist_ok=True)
-
-        latest_path = base / "latest.json"
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-        history_path = base / f"{ts}__{len(classes)}cls.json"
-
-        # Write both latest & history
-        latest_path.write_text(json.dumps(index_remap, indent=2), encoding="utf-8")
-        history_path.write_text(json.dumps(index_remap, indent=2), encoding="utf-8")
-
-        log.info("split.index_remap.write", extra={
-            "latest_path": str(latest_path),
-            "history_path": str(history_path),
-            "classes": classes,
-            "num_classes": len(classes),
-            "dataset": dataset if use_dataset_subdir else None
-        })
-
-        primary_path = latest_path
-    else:
-        # Legacy behavior: write under the split root
-        dst_in_split = split_root / "index_remap.json"
-        dst_in_split.write_text(json.dumps(index_remap, indent=2), encoding="utf-8")
-        log.info("split.index_remap.write_split", extra={
-            "path": str(dst_in_split),
-            "classes": classes,
-            "num_classes": len(classes)
-        })
-        primary_path = dst_in_split
-
-    # 4) Optional extra copies
+    # 4) optional extra copies
     if write_split_copy:
-        dst_in_split = split_root / "index_remap.json"
-        dst_in_split.write_text(json.dumps(index_remap, indent=2), encoding="utf-8")
-        log.info("split.index_remap.copy_split_root", extra={"path": str(dst_in_split)})
-
+        copy_index_remap(latest_path, split_root)
     if also_save_project_root:
-        project_root_path.write_text(json.dumps(index_remap, indent=2), encoding="utf-8")
-        log.info("split.index_remap.copy_project_root", extra={"path": str(project_root_path)})
+        copy_index_remap(latest_path, project_root_path.parent)
 
-    return primary_path
+    return latest_path
 
 
 def main(argv=None) -> int:
@@ -199,6 +146,10 @@ def main(argv=None) -> int:
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)
     args = parser.parse_args(argv)
+
+     # --- run-aware logging ---
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="split")
     
     t0 = time.time()
     random.seed(args.seed)
@@ -206,6 +157,10 @@ def main(argv=None) -> int:
     configure_logging(log_level=args.log_level, log_file=args.log_file)
 
     exts = parse_exts(args.exts)
+    log.debug("split.args", extra={
+        "dataset": args.dataset, "pointer": str(args.pointer) if args.pointer else None,
+        "test_frac": args.test_frac, "seed": args.seed, "exts": sorted(exts) if exts else ["<any>"]
+    })
 
     dataset_slug = os.getenv("DATASET_SLUG", args.dataset)
     pointer = args.pointer or _pointer_path_for(dataset_slug)
@@ -213,10 +168,13 @@ def main(argv=None) -> int:
     if not pointer.exists():
         log.error("split.pointer_missing", extra={"pointer": str(pointer)})
         return 2
-    
-    with pointer.open("r", encoding="utf-8") as f:
-        meta = json.load(f)
-    
+
+    try:
+        meta = json.loads(pointer.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.error("split.pointer_read_error", extra={"pointer": str(pointer), "error": str(e)})
+        return 2
+
     try:
         src_training = Path(meta["training_dir"])
         src_testing  = Path(meta["testing_dir"])
@@ -234,14 +192,20 @@ def main(argv=None) -> int:
         _empty_dir(test_out)
         log.info("split.cleared_dest", extra={"train_out": str(train_out), "test_out": str(test_out)})
 
+    if args.clear_dest:
+        _empty_dir(train_out)
+        _empty_dir(test_out)
+        log.info("split.cleared_dest", extra={"train_out": str(train_out), "test_out": str(test_out)})
+
     # 1) Pool images from both roots
     combined = defaultdict(list)
     for src_root in (src_training, src_testing):
         src_map = gather_by_class(src_root, exts)
         for cls, paths in src_map.items():
             combined[cls].extend(paths)
+    log.debug("split.combined_counts", extra={k: len(v) for k, v in combined.items()})
 
-    # 2) Per-class split (test then train)
+     # 2) Per-class split (test then train)
     summary = []
     for cls, paths in sorted(combined.items()):
         uniq = sorted({str(p) for p in paths})
@@ -261,38 +225,37 @@ def main(argv=None) -> int:
             safe_copy(p, train_out / cls / p.name)
 
         summary.append((cls, len(train_paths), len(test_paths)))
-    
+        log.debug("split.class_summary", extra={"class": cls, "train": len(train_paths), "test": len(test_paths)})
+
+    # 3) Build & write mapping (shared core), optionally copy elsewhere
     try:
-        write_index_remap(
+        _build_and_write_mapping(
             split_root=DATA_DIR,
             prefer_subset="training",
-            use_outputs_dir=True,        # write to outputs/mappings/
-            use_dataset_subdir=False,    # no owner/slug nesting
-            dataset=None,
-            write_split_copy=False,      # optional
-            also_save_project_root=False # optional
+            dataset=None,                 # set to dataset_slug + use_dataset_subdir=True if you want nested mapping dirs
+            use_dataset_subdir=False,
+            write_split_copy=False,
+            also_save_project_root=args.save_remap_to_project_root,
+            project_root_path=Path("index_remap.json"),
         )
     except Exception as e:
         log.error("split.index_remap.failed", extra={"error": str(e)})
         return 2
 
-    # 3) Summary
+    # Final summary
     elapsed = time.time() - t0
-    log.info(
-    "split:done",
-    extra={
+    log.info("split:done", extra={
         "train_out": str(train_out),
         "test_out": str(test_out),
         "elapsed_s": round(elapsed, 2),
-    },
-)
+    })
     print("Split complete. Output at:", str(DATA_DIR))
 
     for cls, ntr, nte in summary:
         print(f"{cls:15s} -> train: {ntr:5d} | test: {nte:5d}")
         log.debug("split:summary", extra={"class": cls, "train": ntr, "test": nte})
-    
-    return 0 # --exit-zero success
+
+    return 0
 
 
 if __name__ == "__main__":
