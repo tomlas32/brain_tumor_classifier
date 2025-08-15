@@ -144,7 +144,7 @@ def _stratified_split(full_ds: ImageFolder, val_frac: float, seed: int) -> Tuple
     return train_subset, Subset(full_ds, val_idx)
 
 
-def run(inputs: TrainRunnerInputs) -> Tuple[float, int, Path, List[str], Dict[str, int], Dict[str, int]]:
+def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     """
     Execute the full training flow and return headline results.
 
@@ -275,4 +275,4 @@ def run(inputs: TrainRunnerInputs) -> Tuple[float, int, Path, List[str], Dict[st
         env_info=get_env_info().to_dict(),
     )
 
-    return best_f1, best_epoch, ckpt_path, expected_classes, full_train.class_to_idx, per_class_counts
+    return best_f1, best_epoch, ckpt_path
