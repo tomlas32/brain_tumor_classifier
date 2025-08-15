@@ -81,18 +81,6 @@ log = get_logger(__name__)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
 
-def set_seed(seed: int) -> None:
-    """
-    Make results reproducible across Python/NumPy/PyTorch (CPU & CUDA).
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # no-op on CPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
 def worker_init_fn(worker_id: int):
     """
     Deterministic DataLoader workers (seed NumPy & random per-worker).
@@ -501,8 +489,6 @@ def main(argv=None) -> int:
 
     bootstrap_env(seed=args.seed)
     log_env_once()
-
-    set_seed(args.seed)
 
     # Transforms
     tfs = build_transforms(args.image_size)
