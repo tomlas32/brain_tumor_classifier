@@ -6,8 +6,7 @@ from src.pipeline import split as split_mod
 from src.pipeline import resize as resize_mod
 from src.pipeline import validate as validate_mod
 from src.pipeline import train as train_mod
-# from src.pipeline.evaluate import evaluate_model
-# from src.pipeline.export import export_artifacts
+from src.pipeline.evaluate import evaluate as evaluate_mod
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.parser_utils import DEFAULT_EXTS
@@ -288,17 +287,59 @@ def train(
         argv += ["--no-amp"]
     if pretrained:
         argv += ["--pretrained"]
-    else:
-        argv += ["--no-pretrained"]
     if log_file:
         argv += ["--log-file", str(log_file)]
 
     code = train_mod.main(argv)   # calls src/training/train.py:main(argv)
     raise typer.Exit(code)
 
-# @app.command()
-# def evaluate(cfg: str = str(CONFIGS_DIR / "eval.yaml")):
-#     evaluate_model(cfg, models_dir=MODELS_DIR, outputs_dir=OUTPUTS_DIR)
+@app.command()
+def evaluate(
+    eval_in: Path = DATA_DIR / "testing_resized",
+    eval_out: Path = OUTPUTS_DIR / "evaluation",
+    trained_model: Path = MODELS_DIR / "best_model.pth",
+    model: str = "resnet18",  # resnet18 | resnet34 | resnet50
+    mapping_path: Path = DEFAULT_INDEX_REMAP,
+    image_size: int = 224,
+    batch_size: int = 64,
+    num_workers: int = 4,
+    seed: int = 42,
+    log_level: str = "INFO",
+    log_file: Optional[str] = None,
+):
+    """
+    Evaluate a trained model on the resized test set.
+
+    This wraps `src.pipeline.evaluate.main(argv)` to ensure consistent CLI behavior.
+
+    Examples
+    --------
+    # Default evaluation
+    python -m src.cli evaluate
+
+    # Custom model checkpoint
+    python -m src.cli evaluate --trained-model models/resnet50_best.pth --model resnet50
+
+    # Change batch size and workers
+    python -m src.cli evaluate --batch-size 128 --num-workers 8
+    """
+    argv = [
+        "--eval-in", str(eval_in),
+        "--eval-out", str(eval_out),
+        "--trained-model", str(trained_model),
+        "--model", model,
+        "--mapping-path", str(mapping_path),
+        "--image-size", str(image_size),
+        "--batch-size", str(batch_size),
+        "--num-workers", str(num_workers),
+        "--seed", str(seed),
+        "--log-level", log_level,
+    ]
+    if log_file:
+        argv += ["--log-file", str(log_file)]
+
+    code = evaluate_mod.main(argv)  # calls src/pipeline/evaluate.py:main(argv)
+    raise typer.Exit(code)
 
 
 if __name__ == "__main__":
