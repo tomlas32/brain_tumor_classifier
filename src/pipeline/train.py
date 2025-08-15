@@ -38,7 +38,7 @@ python -m src.pipeline.train --index-remap outputs/mappings/latest.json
 from __future__ import annotations
 
 from pathlib import Path
-import argparse, time, json, copy, math, random, os
+import argparse, time, json, copy, math, os
 from datetime import datetime, timezone
 import numpy as np
 
@@ -50,13 +50,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torchvision.datasets import ImageFolder
-from torchvision.models import resnet18, resnet34, resnet50
-from torchvision.models import ResNet18_Weights, ResNet34_Weights, ResNet50_Weights
-from torchvision import transforms
 
 from src.utils.logging_utils import configure_logging, get_logger
 from src.core.model import build_model, get_device
+from src.core.metrics import evaluate
 from src.core.transforms import build_transforms
+from src.core.data import make_loader
 from src.core.env import (
     bootstrap_env, 
     log_env_once, 
@@ -75,9 +74,6 @@ from src.utils.parser_utils import (
     add_common_train_args,
     add_model_args,
 )
-from src.pipeline.evaluate import evaluate
-from src.core.data import make_loader
-
 
 log = get_logger(__name__)
 

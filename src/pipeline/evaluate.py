@@ -35,17 +35,13 @@ from __future__ import annotations
 from sklearn.metrics import (
     accuracy_score,
     precision_recall_fscore_support,
-    classification_report,
-    confusion_matrix,
 )
 from src.utils.logging_utils import get_logger, configure_logging
 from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import Subset
 import torch
 import torch.nn as nn
 from torchvision.datasets import ImageFolder
-from torchvision.models import resnet18, resnet34, resnet50
-from torchvision import transforms
 
 import argparse, numpy as np, json, time, os
 from pathlib import Path
@@ -55,6 +51,7 @@ from src.core.mapping import read_index_remap, expected_classes_from_remap
 from src.core.transforms import build_transforms
 from src.core.model import build_model, load_weights, get_device 
 from src.core.data import make_eval_loader
+from src.core.metrics import evaluate, save_classification_report, save_confusions
 
 import matplotlib.pyplot as plt
 
@@ -95,41 +92,6 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     add_common_eval_args(parser)     # --eval-in, --eval-out, --trained-model
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
-
-
-@torch.no_grad()
-def evaluate(model, loader, device):
-    """
-    Compute accuracy, precision, recall, F1 and return raw predictions.
-
-    Returns
-    -------
-    (acc, prec, rec, f1, y_true, y_pred)
-    """
-    model.eval()
-    all_preds, all_labels = [], []
-
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
-        logits = model(xb)
-        preds = torch.argmax(logits, dim=1)
-        all_preds.append(preds.cpu())
-        all_labels.append(yb.cpu())
-
-    y_true = torch.cat(all_labels).numpy()
-    y_pred = torch.cat(all_preds).numpy()
-
-    acc = accuracy_score(y_true, y_pred)
-    prec, rec, f1, _ = precision_recall_fscore_support(
-        y_true, y_pred, average="macro", zero_division=0
-    )
-
-    log.info("evaluation_metrics", extra={
-        "acc": round(acc, 4), "precision": round(prec, 4),
-        "recall": round(rec, 4), "f1": round(f1, 4),
-        "samples": len(y_true)
-    })
-    return acc, prec, rec, f1, y_true, y_pred
 
 
 def verify_class_order_with_index_remap(ds: ImageFolder, mapping_path: Path) -> list[str]:
@@ -196,73 +158,6 @@ def verify_class_order_with_index_remap(ds: ImageFolder, mapping_path: Path) -> 
 
 def _slugify(text: str) -> str:
     return "".join(c.lower() if c.isalnum() else "-" for c in text).strip("-")
-
-
-def report_on_loader(model, loader, class_names, device, out_dir: Path, title: str = "Test"):
-    """
-    Run inference on a DataLoader and save confusion matrices + a classification report.
-
-    Saves two figures to `out_dir`:
-      1) {title}_confusion_counts.png
-      2) {title}_confusion_row-normalized.png
-
-    Returns
-    -------
-    (y_true, y_pred)
-    """
-    model.eval()
-    out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
-    all_preds, all_labels = [], []
-
-    with torch.no_grad():
-        for xb, yb in loader:
-            xb = xb.to(device)
-            logits = model(xb)
-            preds = logits.argmax(1).cpu().numpy()
-            all_preds.append(preds)
-            all_labels.append(yb.numpy())
-
-    y_true = np.concatenate(all_labels)
-    y_pred = np.concatenate(all_preds)
-
-    # classification report (to disk only)
-    try:
-        cr_txt = classification_report(y_true, y_pred, target_names=class_names, digits=3, zero_division=0)
-        cr_path = out_dir / f"{_slugify(title)}_classification_report.txt"
-        cr_path.write_text(cr_txt, encoding="utf-8")
-        log.info("classification_report_saved", extra={"path": str(cr_path)})
-    except Exception as e:
-        log.warning("classification_report_failed", extra={"error": str(e)})
-
-    # confusion matrices
-    mats = [
-        (None, "Counts", f"{_slugify(title)}_confusion_counts.png"),
-        ("true", "Row-normalized (Recall)", f"{_slugify(title)}_confusion_row-normalized.png"),
-    ]
-    ticks = np.arange(len(class_names))
-
-    for normalize, name, fname in mats:
-        cm = confusion_matrix(y_true, y_pred, normalize=normalize)
-        plt.figure(figsize=(6, 5))
-        im = plt.imshow(cm, interpolation="nearest")
-        plt.title(f"{title} — Confusion Matrix ({name})")
-        plt.colorbar(im, fraction=0.046, pad=0.04)
-        plt.xticks(ticks, class_names, rotation=45, ha="right")
-        plt.yticks(ticks, class_names)
-        # annotate
-        for i in range(cm.shape[0]):
-            for j in range(cm.shape[1]):
-                txt = f"{cm[i, j]:.2f}" if normalize else str(int(cm[i, j]))
-                plt.text(j, i, txt, ha="center", va="center")
-        plt.ylabel("True label")
-        plt.xlabel("Predicted label")
-        plt.tight_layout()
-        save_path = out_dir / fname
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close()
-        log.info("confusion_matrix_saved", extra={"normalize": normalize or "none", "path": str(save_path)})
-
-    return y_true, y_pred
 
 
 def get_paths_for_dataset(ds):
@@ -441,14 +336,10 @@ def main(argv=None):
     print(f"TEST — Acc={test_acc:.3f}  P={test_prec:.3f}  R={test_rec:.3f}  F1={test_f1:.3f}")
 
     # 8b) Confusion matrices + classification report
-    report_on_loader(
-        model=model,
-        loader=test_loader,
-        class_names=class_names,
-        device=device,
-        out_dir=Path(args.eval_out),
-        title="Test",
-    )
+    out_dir = Path(args.eval_out); out_dir.mkdir(parents=True, exist_ok=True)
+    save_classification_report(y_true, y_pred, class_names, out_dir / "test_classification_report.txt")
+    # Save confusion matrices
+    save_confusions(y_true, y_pred, class_names, out_dir, title="Test")
 
     # 8c) Full inference outputs (for galleries/Grad-CAM)
     paths = get_paths_for_dataset(test_ds)
