@@ -26,7 +26,7 @@ from src.pipeline.evaluate import evaluate
 
 log = get_logger(__name__)
 
-# COnstants for image normalization
+# Constants for image normalization
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
 
