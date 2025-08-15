@@ -47,6 +47,15 @@ def log_env_once():
         "cudnn_enabled": torch.backends.cudnn.enabled,
     })
 
+def get_env_info() -> dict:
+    return {
+        "torch": torch.__version__,
+        "torchvision": torchvision.__version__,
+        "cuda_available": torch.cuda.is_available(),
+        "cuda_device_count": torch.cuda.device_count(),
+        "cudnn_enabled": torch.backends.cudnn.enabled,
+    }
+
 def worker_init_fn(worker_id: int):
     # Make each DataLoader worker deterministically seeded
     base_seed = torch.initial_seed() % (2**32)
@@ -80,7 +89,7 @@ def write_training_summary(
         "artifacts": {
             "checkpoint": str(ckpt_path.resolve()),
         },
-        "env": log_env_once(),
+        "env": get_env_info(),
         "seed": args_namespace.seed,
     }
 
@@ -268,7 +277,7 @@ def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed:
     return loader
 
 
-def build_model(model_name: str, num_classes: int, pretrained: bool = True) -> nn.Module:
+def build_model(model_name: str, num_classes: int, pretrained: bool = False) -> nn.Module:
     """
     Build a ResNet model with the final layer replaced for the given number of classes.
 
