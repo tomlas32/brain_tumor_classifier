@@ -45,7 +45,7 @@ import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 
 from torch.utils.data import DataLoader, Subset
-import torch, torchvision
+import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
@@ -55,10 +55,18 @@ from torchvision.models import ResNet18_Weights, ResNet34_Weights, ResNet50_Weig
 from torchvision import transforms
 
 from src.utils.logging_utils import configure_logging, get_logger
+from src.core.transforms import build_transforms
 from src.core.env import (
     bootstrap_env, 
     log_env_once, 
     get_env_info
+)
+from src.core.mapping import (
+    read_index_remap,
+    expected_classes_from_remap,
+    verify_dataset_classes,
+    default_index_remap_path,
+    copy_index_remap,
 )
 from src.utils.parser_utils import (
     add_common_logging_args,
@@ -67,19 +75,10 @@ from src.utils.parser_utils import (
     add_model_args,
 )
 from src.pipeline.evaluate import evaluate
-from src.core.mapping import (
-    read_index_remap,
-    expected_classes_from_remap,
-    verify_dataset_classes,
-    default_index_remap_path,
-    copy_index_remap,
-)
+
 
 log = get_logger(__name__)
 
-# Constants for image normalization
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD  = (0.229, 0.224, 0.225)
 
 def worker_init_fn(worker_id: int):
     """
@@ -200,42 +199,6 @@ def make_parser_train() -> argparse.ArgumentParser:
     parser.add_argument("--index-remap", type=Path, default=None,
                         help="Path to index_remap.json (defaults to outputs/mappings/latest.json)")
     return parser
-
-
-def build_transforms(image_size: int) -> dict[str, transforms.Compose]:
-    """
-    Build torchvision transforms for train/val/test sets.
-
-    Args
-    ----
-    image_size : int
-        Target square size after resize/pad.
-
-    Returns
-    -------
-    dict[str, transforms.Compose]
-        Keys 'train', 'val', 'test' with transform pipelines.
-    """
-    return {
-        "train": transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.RandomRotation(15),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.1, contrast=0.1),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]),
-        "val": transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]),
-        "test": transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]),
-    }
 
 
 def make_stratified_subsets(

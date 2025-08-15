@@ -51,7 +51,8 @@ import argparse, numpy as np, json, time, os
 from pathlib import Path
 from src.utils.paths import OUTPUTS_DIR
 from src.core.env import bootstrap_env, log_env_once
-from src.core.mapping import read_index_remap, expected_classes_from_remap 
+from src.core.mapping import read_index_remap, expected_classes_from_remap
+from src.core.transforms import build_transforms 
 
 import matplotlib.pyplot as plt
 
@@ -64,10 +65,6 @@ from datetime import datetime, timezone
 import os as _os
 
 log = get_logger(__name__)
-
-# ImageNet normalization (kept consistent with training)
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD  = (0.229, 0.224, 0.225)
 
 
 def make_parser_evaluate() -> argparse.ArgumentParser:
@@ -128,37 +125,6 @@ def make_eval_loader(dataset, batch_size: int, num_workers: int, seed: int) -> D
         "num_samples": len(dataset), "batch_size": batch_size, "num_workers": num_workers
     })
     return loader
-
-
-def build_transforms(image_size: int) -> dict[str, transforms.Compose]:
-    """
-    Build torchvision transforms for evaluation (kept aligned with training).
-
-    Returns
-    -------
-    dict[str, transforms.Compose]
-        Only 'test' is used here; 'train'/'val' are included for parity.
-    """
-    return {
-        "train": transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.RandomRotation(15),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.1, contrast=0.1),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]),
-        "val": transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]),
-        "test": transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]),
-    }
 
 
 def build_model(model_name: str, num_classes: int, pretrained: bool = False) -> nn.Module:
@@ -509,7 +475,7 @@ def main(argv=None):
 
     bootstrap_env(seed=args.seed)
     log_env_once()
-    
+
     # 3) Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info("device_selected", extra={"device": str(device)})
