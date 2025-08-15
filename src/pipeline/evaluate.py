@@ -41,6 +41,8 @@ from torchvision.datasets import ImageFolder
 import argparse, numpy as np, json, time
 from pathlib import Path
 from src.utils.paths import OUTPUTS_DIR
+
+from src.core.artifacts import write_evaluation_summary
 from src.core.env import bootstrap_env, log_env_once
 from src.core.mapping import read_index_remap, expected_classes_from_remap
 from src.core.transforms import build_transforms
@@ -302,30 +304,20 @@ def main(argv=None):
     )
 
     # 9) Persist a small JSON summary
-    out_dir = Path(args.eval_out); out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    fname = f"evaluation_summary_{(run_id or 'no-runid')}_{ts}.json"
-    summary_path = out_dir / fname
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
-            "class_names": class_names,
-            "metrics": {
-                "acc": round(float(test_acc), 6),
-                "precision_macro": round(float(test_prec), 6),
-                "recall_macro": round(float(test_rec), 6),
-                "f1_macro": round(float(test_f1), 6),
-            },
-        }, f, indent=2, ensure_ascii=False)
-    log.info("evaluation_summary_written", extra={"path": str(summary_path)})
+    metrics_payload = {
+    "acc": test_acc,
+    "precision_macro": test_prec,
+    "recall_macro": test_rec,
+    "f1_macro": test_f1,
+    }
+    write_evaluation_summary(
+        out_dir=Path(args.eval_out),
+        run_id=run_id,
+        args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+        class_names=class_names,
+        metrics=metrics_payload,
+    )
 
-    try:
-        latest_path = out_dir / "evaluation_summary_latest.json"
-        latest_path.write_text(Path(summary_path).read_text(encoding="utf-8"), encoding="utf-8")
-        log.info("evaluation_summary_latest_updated", extra={"path": str(latest_path)})
-    except Exception as e:
-        log.warning("evaluation_summary_latest_update_failed", extra={"error": str(e)})
     return 0
 
 

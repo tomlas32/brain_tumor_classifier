@@ -52,6 +52,7 @@ from torch.optim import lr_scheduler
 from torchvision.datasets import ImageFolder
 
 from src.utils.logging_utils import configure_logging, get_logger
+from src.core.artifacts import write_training_summary
 from src.core.model import build_model, get_device
 from src.core.metrics import evaluate
 from src.core.transforms import build_transforms
@@ -77,92 +78,6 @@ from src.utils.parser_utils import (
 
 log = get_logger(__name__)
 
-
-def write_training_summary(
-    out_summary_dir: Path,
-    args_namespace,
-    class_names: list[str],
-    class_to_idx: dict[str, int],
-    per_class_counts: dict[str, int],
-    best_f1: float,
-    best_epoch: int,
-    ckpt_path: Path,
-    mapping_src: Path,
-    *,
-    run_id: str | None = None,
-):
-    """
-    Write a self-contained JSON summary of the training run and copy `index_remap.json`
-    next to the checkpoint for airtight traceability.
-
-    Parameters
-    ----------
-    out_summary_dir : Path
-        Destination directory for the summary JSON.
-    args_namespace : argparse.Namespace
-        CLI args (will be serialized).
-    class_names : list[str]
-        Ordered class names used by the model.
-    class_to_idx : dict[str,int]
-        Mapping from class name to label index.
-    per_class_counts : dict[str,int]
-        Counts of training samples per class (pre split into train/val).
-    best_f1 : float
-        Best validation macro F1 achieved.
-    best_epoch : int
-        Epoch where best F1 occurred.
-    ckpt_path : Path
-        Path to the saved best checkpoint (.pth).
-    mapping_src : Path
-        Path to the index_remap used for this run.
-    run_id : str | None
-        Optional run identifier to include in the manifest.
-    """
-    out_summary_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    fname = f"training_summary_{(run_id or 'no-runid')}_{ts}.json"
-    summary_path = out_summary_dir / fname
-
-    summary = {
-        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "run_id": run_id,
-        "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args_namespace).items()},
-        "class_names": class_names,
-        "class_to_idx": class_to_idx,
-        "class_distribution": per_class_counts,
-        "results": {
-            "best_f1": round(float(best_f1), 6),
-            "best_epoch": int(best_epoch),
-        },
-        "artifacts": {
-            "checkpoint": str(ckpt_path.resolve()),
-        },
-        "env": get_env_info().to_dict(),
-        "seed": args_namespace.seed,
-    }
-
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-    
-    try:
-        latest_path = out_summary_dir / "training_summary_latest.json"
-        latest_path.write_text(Path(summary_path).read_text(encoding="utf-8"), encoding="utf-8")
-        log.info("training_summary_latest_updated", extra={"path": str(latest_path)})
-    except Exception as e:
-        log.warning("training_summary_latest_update_failed", extra={"error": str(e)})
-
-    # Copy mapping next to the checkpoint (shared helper)
-    try:
-        if mapping_src and Path(mapping_src).exists():
-            copy_index_remap(mapping_src, ckpt_path.parent)
-            log.info("mapping_copied", extra={
-                "from": str(mapping_src),
-                "to": str(ckpt_path.parent / "index_remap.json")
-            })
-    except Exception as e:
-        log.warning("mapping_copy_failed", extra={"error": str(e)})
-
-    log.info("training_summary_written", extra={"path": str(summary_path)})
 
 def make_parser_train() -> argparse.ArgumentParser:
     """
@@ -427,17 +342,18 @@ def main(argv=None) -> int:
     print(f"✅ Training complete. Best F1={best_f1:.4f} at epoch {best_epoch}")
 
     write_training_summary(
-        out_summary_dir=args.out_summary,
-        args_namespace=args,
+        out_dir=args.out_summary,
+        run_id=run_id,
+        args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
         class_names=class_names,
         class_to_idx=class_to_idx,
         per_class_counts=per_class_counts,
         best_f1=best_f1,
         best_epoch=best_epoch,
-        ckpt_path=ckpt_path,
-        mapping_src=mapping_path,
-        run_id=run_id,
+        checkpoint_path=ckpt_path,
+        env_info=get_env_info().to_dict(),
     )
+    
     return 0
 
 if __name__ == "__main__":
