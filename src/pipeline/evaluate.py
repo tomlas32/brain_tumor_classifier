@@ -50,6 +50,7 @@ from src.core.model import build_model, load_weights, get_device
 from src.core.data import make_eval_loader
 from src.core.metrics import evaluate, save_classification_report, save_confusions
 from src.core.viz import show_calls_gallery, show_gradcam_gallery
+from src.evaluate.runner import EvalRunnerInputs, run as run_evaluation
 
 from datetime import datetime, timezone
 import os as _os
@@ -69,8 +70,11 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
       --model resnet18 --image-size 224 --batch-size 64
     """
     parser = argparse.ArgumentParser(description="Evaluate a trained classifier on a test set.")
-    parser.add_argument("--image-size", type=int, default=224, help="Square size used in preprocessing")
-    parser.add_argument("--model", choices=["resnet18","resnet34","resnet50"], default="resnet18")
+    parser.add_argument("--image-size", type=int, 
+                        default=224, help="Square size used in preprocessing")
+    parser.add_argument("--model", 
+                        choices=["resnet18","resnet34","resnet50"], 
+                        default="resnet18")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
@@ -80,130 +84,25 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
         default=OUTPUTS_DIR / "mappings" / "latest.json",
         help="Path to index remap mapping JSON (default: OUTPUTS_DIR/mappings/latest.json)",
     )
+    parser.add_argument(
+    "--top-per-class",
+    type=int,
+    default=6,
+    help="Number of items per true class to include in galleries/Grad-CAM (default: 6)",
+    )
+    parser.add_argument(
+        "--no-galleries",
+        action="store_true",
+        help="Disable plain image galleries of top correct/mistaken predictions",
+    )
+    parser.add_argument(
+        "--no-gradcam",
+        action="store_true",
+        help="Disable Grad-CAM visualizations for top correct/mistaken predictions",
+    )
     add_common_eval_args(parser)     # --eval-in, --eval-out, --trained-model
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
-
-
-def verify_class_order_with_index_remap(ds: ImageFolder, mapping_path: Path) -> list[str]:
-    """
-    Align `ds.classes` to the mapping.
-
-    Behavior
-    --------
-    - If mapping missing/unreadable → WARNING, return `ds.classes`.
-    - If orders already match        → INFO,    return `ds.classes`.
-    - If same set, diff order        → re-map `class_to_idx`, `samples`, `targets`; WARNING.
-    - If sets differ                 → WARNING, return `ds.classes` (metrics may be misleading).
-
-    Supports mapping formats:
-      A) {"class_names": ["glioma", "meningioma", ...]}
-      B) {"0":"glioma","1":"meningioma", ...}  (preferred; created by `split.py`)
-    """
-    mapping_path = Path(mapping_path)
-    if not mapping_path.exists():
-        log.warning("mapping_missing", extra={"expected_path": str(mapping_path)})
-        return ds.classes
-
-    # NEW: use shared mapping reader if dict form; fall back to legacy "class_names"
-    try:
-        obj = json.loads(mapping_path.read_text(encoding="utf-8"))
-        if isinstance(obj, dict) and "class_names" in obj:
-            expected = list(obj["class_names"])
-        else:
-            # preferred core path: str-int keys -> class
-            idx_to_class = read_index_remap(mapping_path)
-            expected = expected_classes_from_remap(idx_to_class)
-    except Exception as e:
-        log.warning("mapping_read_failed", extra={"path": str(mapping_path), "error": str(e)})
-        return ds.classes
-
-    if ds.classes == expected:
-        log.info("class_mapping_verified", extra={"classes": expected})
-        return ds.classes
-
-    if set(ds.classes) == set(expected):
-        old = list(ds.classes)
-        new_class_to_idx = {c: i for i, c in enumerate(expected)}
-        ds.class_to_idx = new_class_to_idx
-        # rebuild samples/targets using folder names
-        new_samples = []
-        for p, _ in ds.samples:
-            cls = Path(p).parent.name
-            if cls not in new_class_to_idx:
-                log.error("sample_class_not_in_mapping", extra={"path": p, "cls": cls})
-                continue
-            new_samples.append((p, new_class_to_idx[cls]))
-        ds.samples = new_samples
-        ds.targets = [y for _, y in new_samples]
-        ds.classes = expected
-        log.warning("class_order_mismatch_fixed", extra={"old_order": old, "new_order": expected})
-        return ds.classes
-
-    log.warning("class_set_mismatch", extra={
-        "dataset_classes": ds.classes, "mapping_classes": expected,
-        "note": "Proceeding without remap; metrics may be wrong."
-    })
-    return ds.classes
-
-
-def get_paths_for_dataset(ds):
-    """Return file paths in a Dataset or Subset, aligned with samples order."""
-    if isinstance(ds, Subset):
-        base, idxs = ds.dataset, ds.indices
-        return [base.samples[i][0] for i in idxs]
-    else:
-        return [s[0] for s in ds.samples]
-
-
-@torch.inference_mode()
-def infer_collect(model, loader, device):
-    """
-    Run forward passes and collect y_true, y_pred, and per-class probabilities.
-    """
-    model.eval()
-    all_y, all_pred, all_prob = [], [], []
-    for xb, yb in loader:
-        xb = xb.to(device, non_blocking=True)
-        logits = model(xb)
-        probs = torch.softmax(logits, dim=1)
-        all_y.append(yb.cpu().numpy())
-        all_pred.append(probs.argmax(1).cpu().numpy())
-        all_prob.append(probs.cpu().numpy())
-    y_true = np.concatenate(all_y)
-    y_pred = np.concatenate(all_pred)
-    probs  = np.concatenate(all_prob)
-    return y_true, y_pred, probs
-
-
-def top_mistakes_per_true_class(y_true, y_pred, probs, paths, max_per_class: int, n_classes: int):
-    """
-    For each true class, select up to `max_per_class` most confident *wrong* predictions.
-    """
-    out = []
-    for c in range(n_classes):
-        mask = (y_true == c) & (y_pred != c)
-        conf = probs[mask, y_pred[mask]] if mask.any() else np.array([])
-        idxs = np.argsort(-conf)[:max_per_class] if conf.size else []
-        for i in idxs:
-            sel = np.flatnonzero(mask)[i]
-            out.append({"true": int(y_true[sel]), "pred": int(y_pred[sel]), "conf": float(conf[i]), "path": paths[sel]})
-    return out
-
-
-def top_correct_per_true_class(y_true, y_pred, probs, paths, max_per_class: int, n_classes: int):
-    """
-    For each true class, select up to `max_per_class` most confident *correct* predictions.
-    """
-    out = []
-    for c in range(n_classes):
-        mask = (y_true == c) & (y_pred == c)
-        conf = probs[mask, c] if mask.any() else np.array([])
-        idxs = np.argsort(-conf)[:max_per_class] if conf.size else []
-        for i in idxs:
-            sel = np.flatnonzero(mask)[i]
-            out.append({"true": c, "pred": c, "conf": float(conf[i]), "path": paths[sel]})
-    return out
 
 
 def main(argv=None):
@@ -228,95 +127,30 @@ def main(argv=None):
     bootstrap_env(seed=args.seed)
     log_env_once()
 
-    # 3) Device
-    device = get_device(prefer_cuda=True)
-    log.info("device_selected", extra={"device": str(device)})
-
-    # 4) Data & transforms (test-only)
-    tfs = build_transforms(args.image_size)
-    test_root = Path(args.eval_in)
-    if not test_root.exists():
-        raise FileNotFoundError(f"--eval-in not found: {test_root}")
-    test_ds = ImageFolder(test_root, transform=tfs["test"])
-
-    # 5) Verify/align class encoding using mapping (warn and proceed if missing)
-    class_names = verify_class_order_with_index_remap(test_ds, args.mapping_path)
-    log.info("class_info", extra={"num_classes": len(class_names), "class_names": class_names})
-
-    # 6) DataLoader
-    test_loader = make_eval_loader(test_ds, args.batch_size, args.num_workers, args.seed)
-
-    # 7) Model + weights (mirror training; pretrained=False)
-    num_classes = len(class_names)
-    model = build_model(args.model, num_classes=num_classes, pretrained=False)
-    load_weights(model, args.trained_model, device, strict=True)
-
-    # 8) Evaluate
-    t0 = time.time()
-    test_acc, test_prec, test_rec, test_f1, y_true, y_pred = evaluate(model, test_loader, device)
-    dt = time.time() - t0
-    log.info("evaluation_metrics", extra={
-        "acc": round(float(test_acc), 4),
-        "precision_macro": round(float(test_prec), 4),
-        "recall_macro": round(float(test_rec), 4),
-        "f1_macro": round(float(test_f1), 4),
-        "elapsed_sec": round(dt, 2),
-        "samples": len(y_true)
-    })
-    print(f"TEST — Acc={test_acc:.3f}  P={test_prec:.3f}  R={test_rec:.3f}  F1={test_f1:.3f}")
-
-    # 8b) Confusion matrices + classification report
-    out_dir = Path(args.eval_out); out_dir.mkdir(parents=True, exist_ok=True)
-    save_classification_report(y_true, y_pred, class_names, out_dir / "test_classification_report.txt")
-    # Save confusion matrices
-    save_confusions(y_true, y_pred, class_names, out_dir, title="Test")
-
-    # 8c) Full inference outputs (for galleries/Grad-CAM)
-    paths = get_paths_for_dataset(test_ds)
-    y_true2, y_pred2, probs = infer_collect(model, test_loader, device)
-    assert np.array_equal(y_true, y_true2) and np.array_equal(y_pred, y_pred2), \
-        "Mismatch between evaluate() and infer_collect() results."
-
-    # 8d) Top examples per true class
-    max_per_class = 6
-    mistakes = top_mistakes_per_true_class(
-        y_true, y_pred, probs, paths, max_per_class, n_classes=len(class_names)
-    )
-    corrects = top_correct_per_true_class(
-        y_true, y_pred, probs, paths, max_per_class, n_classes=len(class_names)
-    )
-
-    # 8e) Save galleries
-    gallery_dir = Path(args.eval_out) / "galleries"
-    gallery_dir.mkdir(parents=True, exist_ok=True)
-    show_calls_gallery(mistakes, class_names, cols=6, title="misclassifications", save_dir=gallery_dir)
-    show_calls_gallery(corrects, class_names, cols=6, title="top-correct", save_dir=gallery_dir)
-
-    # 8f) Grad-CAM overlays
-    gradcam_dir = Path(args.eval_out) / "gradcam"
-    show_gradcam_gallery(
-        predictions=mistakes, class_names=class_names, model=model, device=device,
-        ds_for_transform=test_ds, cols=4, title="misclass_gradcam", target_layer=None, save_dir=gradcam_dir
-    )
-    show_gradcam_gallery(
-        predictions=corrects, class_names=class_names, model=model, device=device,
-        ds_for_transform=test_ds, cols=4, title="correct_class_gradcam", target_layer=None, save_dir=gradcam_dir
-    )
-
-    # 9) Persist a small JSON summary
-    metrics_payload = {
-    "acc": test_acc,
-    "precision_macro": test_prec,
-    "recall_macro": test_rec,
-    "f1_macro": test_f1,
-    }
-    write_evaluation_summary(
-        out_dir=Path(args.eval_out),
+    inputs = EvalRunnerInputs(
+        image_size=args.image_size,
+        eval_in=Path(args.eval_in),
+        mapping_path=Path(args.mapping_path),
+        model_name=args.model,
+        weights_path=Path(args.trained_model),
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        seed=args.seed,
+        eval_out=Path(args.eval_out),
         run_id=run_id,
         args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
-        class_names=class_names,
-        metrics=metrics_payload,
+        make_galleries=not args.no_galleries,
+        make_gradcam=not args.no_gradcam,
+        top_per_class=args.top_per_class,
     )
+
+    acc, prec, rec, f1 = run_evaluation(inputs)
+    log.info("evaluation_complete", extra={
+        "acc": round(acc, 4),
+        "precision_macro": round(prec, 4),
+        "recall_macro": round(rec, 4),
+        "f1_macro": round(f1, 4),
+    })
 
     return 0
 
