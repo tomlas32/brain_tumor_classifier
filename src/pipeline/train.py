@@ -38,24 +38,14 @@ python -m src.pipeline.train --index-remap outputs/mappings/latest.json
 from __future__ import annotations
 
 from pathlib import Path
-import argparse, time, copy, math, os
+import argparse, os
 from datetime import datetime, timezone
-import numpy as np
-
-import torch
 
 from src.utils.logging_utils import configure_logging, get_logger
-from src.core.artifacts import write_training_summary
-from src.core.model import build_model, get_device
-from src.core.transforms import build_transforms
-from src.core.data import make_loader
+from src.core.config import build_train_config, to_dict
 from src.core.env import (
     bootstrap_env, 
-    log_env_once, 
-    get_env_info
-)
-from src.core.mapping import (
-    default_index_remap_path,
+    log_env_once
 )
 from src.utils.parser_utils import (
     add_common_logging_args,
@@ -90,6 +80,10 @@ def make_parser_train() -> argparse.ArgumentParser:
     add_common_train_args(parser)     # epochs, lr, weight_decay, scheduler, amp, etc.
     add_model_args(parser)            # model name + pretrained flag
     add_common_logging_args(parser)   # log level/file
+    parser.add_argument("--config", type=Path, default=None,
+                    help="Optional YAML config file for training.")
+    parser.add_argument("--override", action="append", default=[],
+                        help="Override config values: key=val (e.g., model.name=resnet50)")
     parser.add_argument("--index-remap", type=Path, default=None,
                         help="Path to index_remap.json (defaults to outputs/mappings/latest.json)")
     return parser
@@ -115,27 +109,30 @@ def main(argv=None) -> int:
     bootstrap_env(seed=args.seed)
     log_env_once()
 
+    # ---- Build config ----
+    cfg = build_train_config(args.config, overrides=args.override)
+
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
-        image_size=args.image_size,
-        train_in=args.train_in,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        val_frac=args.val_frac,
-        seed=args.seed,
-        model_name=args.model,
-        pretrained=bool(args.pretrained),
-        epochs=args.epochs,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        step_size=args.step_size,
-        gamma=args.gamma,
-        amp=bool(args.amp),
-        out_models=args.out_models,
-        out_summary=args.out_summary,
-        index_remap=args.index_remap,
-        run_id=run_id,
-        args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+        image_size=cfg.data.image_size,
+        train_in=Path(cfg.data.train_in) if cfg.data.train_in else args.train_in,
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.data.num_workers,
+        val_frac=cfg.data.val_frac,
+        seed=cfg.data.seed,
+        model_name=cfg.model.name,
+        pretrained=cfg.model.pretrained,
+        epochs=args.epochs,      # remains CLI for now (or add to YAML & dataclass)
+        lr=cfg.optim.lr,
+        weight_decay=cfg.optim.weight_decay,
+        step_size=cfg.optim.step_size,
+        gamma=cfg.optim.gamma,
+        amp=cfg.optim.amp,
+        out_models=cfg.io.out_models,
+        out_summary=cfg.io.out_summary,
+        index_remap=args.index_remap,  # or extend DataConfig with it if you prefer
+        run_id=cfg.run_id or run_id,
+        args_dict=to_dict(cfg),
     )
 
 
