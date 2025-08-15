@@ -160,7 +160,9 @@ def write_training_summary(
         Optional run identifier to include in the manifest.
     """
     out_summary_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = out_summary_dir / "training_summary.json"
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    fname = f"training_summary_{(run_id or 'no-runid')}_{ts}.json"
+    summary_path = out_summary_dir / fname
 
     summary = {
         "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -182,6 +184,13 @@ def write_training_summary(
 
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
+    
+    try:
+        latest_path = out_summary_dir / "training_summary_latest.json"
+        latest_path.write_text(Path(summary_path).read_text(encoding="utf-8"), encoding="utf-8")
+        log.info("training_summary_latest_updated", extra={"path": str(latest_path)})
+    except Exception as e:
+        log.warning("training_summary_latest_update_failed", extra={"error": str(e)})
 
     # Copy mapping next to the checkpoint (shared helper)
     try:
