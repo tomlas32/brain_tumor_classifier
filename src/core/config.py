@@ -45,6 +45,12 @@ class ModelConfig:
 
 
 @dataclass
+class TrainLoopConfig:
+    """Training loop settings."""
+    epochs: int = 20
+
+
+@dataclass
 class OptimConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-4
@@ -73,6 +79,7 @@ class TrainConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
     io: TrainIOConfig = field(default_factory=TrainIOConfig)
+    loop: TrainLoopConfig = field(default_factory=TrainLoopConfig)
     run_id: Optional[str] = None
 
 
@@ -192,6 +199,7 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         model=ModelConfig(**base.get("model", {})),
         optim=OptimConfig(**base.get("optim", {})),
         io=TrainIOConfig(**base.get("io", {})),
+        loop=TrainLoopConfig(**base.get("loop", {})),
         run_id=base.get("run_id"),
     )
 

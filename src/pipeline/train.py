@@ -111,6 +111,7 @@ def main(argv=None) -> int:
 
     # ---- Build config ----
     cfg = build_train_config(args.config, overrides=args.override)
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
@@ -122,7 +123,7 @@ def main(argv=None) -> int:
         seed=cfg.data.seed,
         model_name=cfg.model.name,
         pretrained=cfg.model.pretrained,
-        epochs=args.epochs,      # remains CLI for now (or add to YAML & dataclass)
+        epochs=cfg.loop.epochs,  
         lr=cfg.optim.lr,
         weight_decay=cfg.optim.weight_decay,
         step_size=cfg.optim.step_size,
@@ -130,7 +131,7 @@ def main(argv=None) -> int:
         amp=cfg.optim.amp,
         out_models=cfg.io.out_models,
         out_summary=cfg.io.out_summary,
-        index_remap=args.index_remap,  # or extend DataConfig with it if you prefer
+        index_remap=cfg.data.mapping_path or args.index_remap,  # or extend DataConfig with it if you prefer
         run_id=cfg.run_id or run_id,
         args_dict=to_dict(cfg),
     )

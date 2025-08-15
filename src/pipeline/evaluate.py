@@ -127,20 +127,20 @@ def main(argv=None):
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     inputs = EvalRunnerInputs(
-        image_size=args.image_size,
-        eval_in=Path(args.eval_in),
-        mapping_path=Path(args.mapping_path),
-        model_name=args.model,
-        weights_path=Path(args.trained_model),
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        seed=args.seed,
-        eval_out=Path(args.eval_out),
-        run_id=run_id,
-        args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
-        make_galleries=not args.no_galleries,
-        make_gradcam=not args.no_gradcam,
-        top_per_class=args.top_per_class,
+        image_size=cfg.data.image_size,
+        eval_in=Path(cfg.data.eval_in) if cfg.data.eval_in else Path(args.eval_in),
+        mapping_path=Path(cfg.data.mapping_path) if cfg.data.mapping_path else Path(args.mapping_path),
+        model_name=cfg.model.name,
+        weights_path=Path(cfg.model.weights_path) if cfg.model.weights_path else Path(args.trained_model),
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.data.num_workers,
+        seed=cfg.data.seed,
+        eval_out=cfg.io.eval_out,
+        run_id=cfg.run_id or run_id,
+        args_dict=to_dict(cfg),
+        make_galleries=cfg.io.make_galleries,
+        make_gradcam=cfg.io.make_gradcam,
+        top_per_class=cfg.io.top_per_class,
     )
 
     acc, prec, rec, f1 = run_evaluation(inputs)
