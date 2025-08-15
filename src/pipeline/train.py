@@ -55,6 +55,11 @@ from torchvision.models import ResNet18_Weights, ResNet34_Weights, ResNet50_Weig
 from torchvision import transforms
 
 from src.utils.logging_utils import configure_logging, get_logger
+from src.core.env import (
+    bootstrap_env, 
+    log_env_once, 
+    get_env_info
+)
 from src.utils.parser_utils import (
     add_common_logging_args,
     add_common_dataset_args,
@@ -87,29 +92,6 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def log_env_once():
-    """
-    Emit one-time environment info (framework versions, CUDA availability).
-    """
-    log.info("env.versions", extra={
-        "torch": torch.__version__,
-        "torchvision": torchvision.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device_count": torch.cuda.device_count(),
-        "cudnn_enabled": torch.backends.cudnn.enabled,
-    })
-
-def get_env_info() -> dict:
-    """
-    Return a dict suitable for serializing into the training summary.
-    """
-    return {
-        "torch": torch.__version__,
-        "torchvision": torchvision.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device_count": torch.cuda.device_count(),
-        "cudnn_enabled": torch.backends.cudnn.enabled,
-    }
 
 def worker_init_fn(worker_id: int):
     """
@@ -178,7 +160,7 @@ def write_training_summary(
         "artifacts": {
             "checkpoint": str(ckpt_path.resolve()),
         },
-        "env": get_env_info(),
+        "env": get_env_info().to_dict(),
         "seed": args_namespace.seed,
     }
 
@@ -517,8 +499,10 @@ def main(argv=None) -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info("device_selected", extra={"device": str(device)})
 
-    set_seed(args.seed)
+    bootstrap_env(seed=args.seed)
     log_env_once()
+
+    set_seed(args.seed)
 
     # Transforms
     tfs = build_transforms(args.image_size)

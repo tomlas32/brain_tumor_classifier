@@ -50,7 +50,8 @@ from torchvision import transforms
 import argparse, numpy as np, json, time, os
 from pathlib import Path
 from src.utils.paths import OUTPUTS_DIR
-from src.core.mapping import read_index_remap, expected_classes_from_remap  # NEW
+from src.core.env import bootstrap_env, log_env_once
+from src.core.mapping import read_index_remap, expected_classes_from_remap 
 
 import matplotlib.pyplot as plt
 
@@ -506,6 +507,9 @@ def main(argv=None):
         configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="evaluate")
     log.info("evaluate.start", extra={"args": {k: (str(v) if isinstance(v, Path) else v) for k,v in vars(args).items()}})
 
+    bootstrap_env(seed=args.seed)
+    log_env_once()
+    
     # 3) Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info("device_selected", extra={"device": str(device)})
