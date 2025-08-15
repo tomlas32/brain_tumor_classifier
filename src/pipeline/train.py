@@ -277,7 +277,7 @@ def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed:
     return loader
 
 
-def build_model(model_name: str, num_classes: int, pretrained: bool = False) -> nn.Module:
+def build_model(model_name: str, num_classes: int, pretrained: bool = True) -> nn.Module:
     """
     Build a ResNet model with the final layer replaced for the given number of classes.
 
