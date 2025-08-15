@@ -53,6 +53,8 @@ from src.utils.parser_utils import parse_exts, add_common_logging_args, DEFAULT_
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 from src.core.mapping import read_index_remap, expected_classes_from_remap
 
+VALIDATION_REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
+
 log = get_logger(__name__)
 
 def _load_valid_classes(index_remap_path: Path) -> Set[str]:
@@ -305,6 +307,8 @@ def main(argv=None) -> int:
                         help="Warn if file size is below this many bytes")
     parser.add_argument("--fail-on", choices=["error", "warning", "never"], default="error",
                         help="Exit with nonzero code if these severities occur")
+    parser.add_argument("--write-report", action="store_true", default=True,
+                        help="Write the validation summary JSON to outputs/validation_reports/")
 
     # shared logging flags: --log-level, --log-file
     add_common_logging_args(parser)
@@ -337,6 +341,14 @@ def main(argv=None) -> int:
         warn_low_std=args.warn_low_std,
         min_file_bytes=args.min_file_bytes,
     )
+
+    if args.write_report:
+        VALIDATION_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = VALIDATION_REPORTS_DIR / f"validation_{ts}.json"
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        log.info("validation_report_written", extra={"path": str(report_path)})
 
     # Compact human summary to stdout
     print(
