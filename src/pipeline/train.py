@@ -85,7 +85,7 @@ def make_parser_train() -> argparse.ArgumentParser:
     parser.add_argument("--override", action="append", default=[],
                         help="Override config values: key=val (e.g., model.name=resnet50)")
     parser.add_argument("--index-remap", type=Path, default=None,
-                        help="Path to index_remap.json (defaults to outputs/mappings/latest.json)")
+    help="(Deprecated) Prefer config.data.mapping_path. If provided, overrides config.")
     return parser
 
 
