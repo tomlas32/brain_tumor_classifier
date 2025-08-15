@@ -55,6 +55,7 @@ from torchvision.models import ResNet18_Weights, ResNet34_Weights, ResNet50_Weig
 from torchvision import transforms
 
 from src.utils.logging_utils import configure_logging, get_logger
+from src.core.model import build_model, get_device
 from src.core.transforms import build_transforms
 from src.core.env import (
     bootstrap_env, 
@@ -301,47 +302,6 @@ def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed:
     return loader
 
 
-def build_model(model_name: str, num_classes: int, pretrained: bool = True) -> nn.Module:
-    """
-    Build a ResNet model with the final layer replaced for the given number of classes.
-
-    Args
-    ----
-    model_name : {'resnet18','resnet34','resnet50'}
-    num_classes : int
-    pretrained : bool
-
-    Returns
-    -------
-    nn.Module
-        A PyTorch model ready for training.
-    """
-    model_name = model_name.lower()
-
-    if model_name == "resnet18":
-        weights = ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-        model = resnet18(weights=weights)
-    elif model_name == "resnet34":
-        weights = ResNet34_Weights.IMAGENET1K_V1 if pretrained else None
-        model = resnet34(weights=weights)
-    elif model_name == "resnet50":
-        weights = ResNet50_Weights.IMAGENET1K_V2 if pretrained else None
-        model = resnet50(weights=weights)
-    else:
-        raise ValueError(f"Unsupported model_name: {model_name}")
-
-    in_features = model.fc.in_features
-    model.fc = nn.Linear(in_features, num_classes)
-
-    log.info("model_built", extra={
-        "model_name": model_name,
-        "pretrained": pretrained,
-        "num_classes": num_classes
-    })
-    return model
-
-
-
 def train_loop(
     model: nn.Module,
     train_loader: DataLoader,
@@ -447,7 +407,7 @@ def main(argv=None) -> int:
         configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="train")
 
     # Device & env
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(prefer_cuda=True)
     log.info("device_selected", extra={"device": str(device)})
 
     bootstrap_env(seed=args.seed)
