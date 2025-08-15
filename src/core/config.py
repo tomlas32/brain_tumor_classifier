@@ -1,0 +1,220 @@
+"""
+Typed run configurations + YAML loader and override utilities.
+
+This module provides dataclass-based configs for training/evaluation and
+helpers to:
+- load a YAML config file,
+- apply CLI overrides like `model.name=resnet34 train.epochs=50`,
+- convert configs to plain dicts for summaries/logs.
+
+Logging
+-------
+Use your stage logger to record the final, resolved config before running.
+(e.g., log.info("config.resolved", extra={"config": cfg.to_dict()}))
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, asdict, replace
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import copy
+import json
+import yaml  # PyYAML
+
+# ----------------------- Dataclasses (typed schema) ---------------------------
+
+@dataclass
+class DataConfig:
+    image_size: int = 224
+    train_in: Optional[Path] = None   # training root (class folders)
+    eval_in: Optional[Path] = None    # test root (class folders)
+    mapping_path: Optional[Path] = None
+    batch_size: int = 32
+    num_workers: int = 4
+    val_frac: float = 0.2
+    seed: int = 42
+
+
+@dataclass
+class ModelConfig:
+    name: str = "resnet18"            # resnet18|resnet34|resnet50
+    pretrained: bool = True
+    weights_path: Optional[Path] = None  # used for evaluation
+
+
+@dataclass
+class OptimConfig:
+    lr: float = 1e-3
+    weight_decay: float = 1e-4
+    step_size: int = 10
+    gamma: float = 0.1
+    amp: bool = True
+
+
+@dataclass
+class TrainIOConfig:
+    out_models: Path = Path("models")
+    out_summary: Path = Path("outputs/training")
+
+
+@dataclass
+class EvalIOConfig:
+    eval_out: Path = Path("outputs/evaluation")
+    make_galleries: bool = True
+    make_gradcam: bool = True
+    top_per_class: int = 6
+
+
+@dataclass
+class TrainConfig:
+    data: DataConfig = field(default_factory=DataConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    optim: OptimConfig = field(default_factory=OptimConfig)
+    io: TrainIOConfig = field(default_factory=TrainIOConfig)
+    run_id: Optional[str] = None
+
+
+@dataclass
+class EvalConfig:
+    data: DataConfig = field(default_factory=DataConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    io: EvalIOConfig = field(default_factory=EvalIOConfig)
+    run_id: Optional[str] = None
+
+
+# ----------------------- Loader / overrides / utils ---------------------------
+
+def _deep_update(dst: dict, src: dict) -> dict:
+    """Recursively merge dict `src` into dict `dst` (in place) and return dst."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _deep_update(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
+def _to_nested_dict(obj) -> dict:
+    """Dataclass or simple object → dict suitable for deep update."""
+    if hasattr(obj, "__dataclass_fields__"):
+        return asdict(obj)
+    if isinstance(obj, dict):
+        return copy.deepcopy(obj)
+    raise TypeError(f"Unsupported config type: {type(obj)}")
+
+
+def load_yaml_config(path: Path) -> dict:
+    """
+    Load a YAML file into a plain dict.
+
+    Parameters
+    ----------
+    path : Path
+        YAML path.
+
+    Returns
+    -------
+    dict
+        Parsed configuration as a nested dict.
+    """
+    with Path(path).open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError("Top-level YAML must be a mapping (dict).")
+    return data
+
+
+def apply_overrides(base: dict, overrides: List[str]) -> dict:
+    """
+    Apply CLI overrides of the form 'a.b.c=value' to a nested dict.
+
+    Supported value parsing: bool, int, float, null, strings.
+    Examples:
+        model.name=resnet50
+        optim.lr=3e-4
+        io.eval_out=outputs/eval_x
+        data.seed=1337
+        io.make_galleries=false
+
+    Returns
+    -------
+    dict
+        Mutated copy of base with overrides applied.
+    """
+    out = copy.deepcopy(base)
+
+    def parse_scalar(s: str):
+        low = s.lower()
+        if low in ("true", "false"):
+            return low == "true"
+        if low in ("null", "none"):
+            return None
+        try:
+            if "." in s:
+                return float(s)
+            return int(s)
+        except ValueError:
+            return s
+
+    for ov in overrides or []:
+        if "=" not in ov:
+            raise ValueError(f"Override must be key=value: '{ov}'")
+        key, raw = ov.split("=", 1)
+        path = key.split(".")
+        val = parse_scalar(raw)
+
+        cursor = out
+        for p in path[:-1]:
+            if p not in cursor or not isinstance(cursor[p], dict):
+                cursor[p] = {}
+            cursor = cursor[p]
+        cursor[path[-1]] = val
+
+    return out
+
+
+def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> TrainConfig:
+    """
+    Build a TrainConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = _to_nested_dict(TrainConfig())  # defaults
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+    # Convert nested dict → dataclass
+    return TrainConfig(
+        data=DataConfig(**base.get("data", {})),
+        model=ModelConfig(**base.get("model", {})),
+        optim=OptimConfig(**base.get("optim", {})),
+        io=TrainIOConfig(**base.get("io", {})),
+        run_id=base.get("run_id"),
+    )
+
+
+def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalConfig:
+    """
+    Build an EvalConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = _to_nested_dict(EvalConfig())  # defaults
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+    return EvalConfig(
+        data=DataConfig(**base.get("data", {})),
+        model=ModelConfig(**base.get("model", {})),
+        io=EvalIOConfig(**base.get("io", {})),
+        run_id=base.get("run_id"),
+    )
+
+
+def to_dict(dc) -> Dict[str, Any]:
+    """Dataclass → plain dict (for logging/manifests)."""
+    return asdict(dc)
