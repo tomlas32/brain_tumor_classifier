@@ -5,7 +5,7 @@ from src.pipeline import fetch as fetch_mod
 from src.pipeline import split as split_mod
 from src.pipeline import resize as resize_mod
 from src.pipeline import validate as validate_mod
-# from src.pipeline.train import train_model
+from src.pipeline import train as train_mod
 # from src.pipeline.evaluate import evaluate_model
 # from src.pipeline.export import export_artifacts
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
@@ -212,17 +212,94 @@ def validate(
     code = validate_mod.main(argv)   # calls validate.py main(argv)
     raise typer.Exit(code)           # propagate exit status to shell/CI
 
-# @app.command()
-# def train(cfg: str = str(CONFIGS_DIR / "train.yaml")):
-#     train_model(cfg, models_dir=MODELS_DIR, outputs_dir=OUTPUTS_DIR)
+@app.command()
+def train(
+    # I/O
+    train_in: Path = DATA_DIR / "training_resized",
+    out_models: Path = MODELS_DIR,
+    out_summary: Path = OUTPUTS_DIR / "training",
+
+    # data/split
+    val_frac: float = 0.20,
+    image_size: int = 224,
+
+    # training
+    batch_size: int = 32,
+    num_workers: int = 4,
+    epochs: int = 15,
+    lr: float = 1e-4,
+    weight_decay: float = 1e-4,
+    step_size: int = 5,
+    gamma: float = 0.5,
+    seed: int = 42,
+    amp: bool = True,
+
+    # model
+    model: str = "resnet18",           # choices: resnet18 | resnet34 | resnet50
+    pretrained: bool = True,
+
+    # logging
+    log_level: str = "INFO",
+    log_file: Optional[str] = None,
+):
+    """
+    Train a CNN on the resized training set.
+
+    Wraps `src.training.train.main(argv)` to keep CLI consistent with other steps.
+    Uses the class mapping from `outputs/mappings/latest.json` (written by `split`).
+
+    Examples
+    --------
+    # Default training
+    python -m src.cli train
+
+    # Heavier model, more epochs
+    python -m src.cli train --model resnet50 --epochs 30
+
+    # Change LR/scheduler and disable AMP
+    python -m src.cli train --lr 3e-4 --step-size 10 --gamma 0.3 --amp False
+
+    # Custom paths
+    python -m src.cli train --train-in data/training_resized --out-models models/brain_tumor
+    """
+    argv = [
+        "--train-in", str(train_in),
+        "--val-frac", str(val_frac),
+        "--image-size", str(image_size),
+
+        "--batch-size", str(batch_size),
+        "--num-workers", str(num_workers),
+        "--epochs", str(epochs),
+        "--lr", str(lr),
+        "--weight-decay", str(weight_decay),
+        "--step-size", str(step_size),
+        "--gamma", str(gamma),
+        "--seed", str(seed),
+
+        "--model", model,
+        "--out-models", str(out_models),
+        "--out-summary", str(out_summary),
+
+        "--log-level", log_level,
+    ]
+
+    # booleans as flags (match train.py parser)
+    if not amp:
+        argv += ["--no-amp"]
+    if pretrained:
+        argv += ["--pretrained"]
+    else:
+        argv += ["--no-pretrained"]
+    if log_file:
+        argv += ["--log-file", str(log_file)]
+
+    code = train_mod.main(argv)   # calls src/training/train.py:main(argv)
+    raise typer.Exit(code)
 
 # @app.command()
 # def evaluate(cfg: str = str(CONFIGS_DIR / "eval.yaml")):
 #     evaluate_model(cfg, models_dir=MODELS_DIR, outputs_dir=OUTPUTS_DIR)
 
-# @app.command()
-# def export(src_weights: str, dst_dir: str = str(MODELS_DIR)):
-#     export_artifacts(src_weights, dst_dir)
 
 if __name__ == "__main__":
     app()
