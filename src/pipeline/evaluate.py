@@ -32,18 +32,13 @@ python -m src.pipeline.evaluate \
 
 from __future__ import annotations
 
-from sklearn.metrics import (
-    accuracy_score,
-    precision_recall_fscore_support,
-)
 from src.utils.logging_utils import get_logger, configure_logging
 from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
 from torch.utils.data import Subset
 import torch
-import torch.nn as nn
 from torchvision.datasets import ImageFolder
 
-import argparse, numpy as np, json, time, os
+import argparse, numpy as np, json, time
 from pathlib import Path
 from src.utils.paths import OUTPUTS_DIR
 from src.core.env import bootstrap_env, log_env_once
@@ -52,14 +47,8 @@ from src.core.transforms import build_transforms
 from src.core.model import build_model, load_weights, get_device 
 from src.core.data import make_eval_loader
 from src.core.metrics import evaluate, save_classification_report, save_confusions
+from src.core.viz import show_calls_gallery, show_gradcam_gallery
 
-import matplotlib.pyplot as plt
-
-from pytorch_grad_cam import GradCAM
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-from pytorch_grad_cam.utils.image import show_cam_on_image
-
-from PIL import Image, ImageOps
 from datetime import datetime, timezone
 import os as _os
 
@@ -156,10 +145,6 @@ def verify_class_order_with_index_remap(ds: ImageFolder, mapping_path: Path) -> 
     return ds.classes
 
 
-def _slugify(text: str) -> str:
-    return "".join(c.lower() if c.isalnum() else "-" for c in text).strip("-")
-
-
 def get_paths_for_dataset(ds):
     """Return file paths in a Dataset or Subset, aligned with samples order."""
     if isinstance(ds, Subset):
@@ -218,63 +203,6 @@ def top_correct_per_true_class(y_true, y_pred, probs, paths, max_per_class: int,
             out.append({"true": c, "pred": c, "conf": float(conf[i]), "path": paths[sel]})
     return out
 
-
-def show_calls_gallery(predictions, class_names, cols: int, title: str, save_dir: str | None):
-    """
-    Render a gallery image for a set of predictions (correct or mistakes).
-    """
-    rows = int(np.ceil(len(predictions) / cols))
-    plt.figure(figsize=(3*cols, 3.3*rows))
-    for i, m in enumerate(predictions, 1):
-        ax = plt.subplot(rows, cols, i)
-        img = ImageOps.exif_transpose(Image.open(m["path"])).convert("L")
-        ax.imshow(img, cmap="gray", vmin=0, vmax=255)
-        ax.set_title(f"{class_names[m['true']]} → {class_names[m['pred']]}\nconf={m['conf']:.2f}", fontsize=9)
-        ax.axis("off")
-    plt.tight_layout()
-    if save_dir is not None:
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        out_path = os.path.join(save_dir, f"{_slugify(title)}.png")
-        plt.savefig(out_path, dpi=180, bbox_inches="tight")
-        log.info("gallery.saved", extra={"path": out_path, "n_items": len(predictions)})
-    plt.close()
-
-
-def _pick_last_conv_layer(model: nn.Module):
-    # crude heuristic for resnets; if needed, allow override via CLI later
-    for name, module in reversed(list(model.named_modules())):
-        if isinstance(module, nn.Conv2d):
-            return module
-    raise RuntimeError("Could not find a convolutional layer for Grad-CAM.")
-
-def show_gradcam_gallery(
-    predictions, class_names, model, device, ds_for_transform, cols: int, title: str, target_layer=None, save_dir: Path | None = None
-):
-    """
-    Render Grad-CAM overlays for a set of predictions (paths + indices).
-    """
-    target_layer = target_layer or _pick_last_conv_layer(model)
-    cam = GradCAM(model=model, target_layers=[target_layer], use_cuda=device.type == "cuda")
-
-    rows = int(np.ceil(len(predictions) / cols)) or 1
-    plt.figure(figsize=(3.5*cols, 3.8*rows))
-    for i, m in enumerate(predictions, 1):
-        ax = plt.subplot(rows, cols, i)
-        img = ImageOps.exif_transpose(Image.open(m["path"])).convert("RGB")
-        img_arr = np.array(img).astype(np.float32) / 255.0
-        x = ds_for_transform.transform(img).unsqueeze(0).to(device)
-        grayscale_cam = cam(input_tensor=x, targets=[ClassifierOutputTarget(m["pred"])])[0]
-        overlay = show_cam_on_image(img_arr, grayscale_cam, use_rgb=True)
-        ax.imshow(overlay)
-        ax.set_title(f"{class_names[m['true']]} → {class_names[m['pred']]}\nconf={m['conf']:.2f}", fontsize=9)
-        ax.axis("off")
-    plt.tight_layout()
-    if save_dir is not None:
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        out_path = os.path.join(save_dir, f"{_slugify(title)}.png")
-        plt.savefig(out_path, dpi=160, bbox_inches="tight")
-        log.info("gradcam.saved", extra={"path": out_path, "n_items": len(predictions)})
-    plt.close()
 
 def main(argv=None):
     """
