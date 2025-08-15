@@ -52,7 +52,8 @@ from pathlib import Path
 from src.utils.paths import OUTPUTS_DIR
 from src.core.env import bootstrap_env, log_env_once
 from src.core.mapping import read_index_remap, expected_classes_from_remap
-from src.core.transforms import build_transforms 
+from src.core.transforms import build_transforms
+from src.core.model import build_model, load_weights, get_device 
 
 import matplotlib.pyplot as plt
 
@@ -125,49 +126,6 @@ def make_eval_loader(dataset, batch_size: int, num_workers: int, seed: int) -> D
         "num_samples": len(dataset), "batch_size": batch_size, "num_workers": num_workers
     })
     return loader
-
-
-def build_model(model_name: str, num_classes: int, pretrained: bool = False) -> nn.Module:
-    """
-    Construct a ResNet and replace the classification head for `num_classes`.
-    """
-    name = model_name.lower()
-    if name == "resnet18":
-        model = resnet18(weights=None if not pretrained else None)
-    elif name == "resnet34":
-        model = resnet34(weights=None if not pretrained else None)
-    elif name == "resnet50":
-        model = resnet50(weights=None if not pretrained else None)
-    else:
-        raise ValueError(f"Unsupported model_name: {model_name}")
-
-    in_features = model.fc.in_features
-    model.fc = nn.Linear(in_features, num_classes)
-    log.info("model_built", extra={"arch": model_name, "num_classes": num_classes, "pretrained": pretrained})
-    return model
-
-
-def load_weights(model: nn.Module, weights_path: str | Path, device: torch.device) -> None:
-    """
-    Load a checkpoint into `model` (handles common 'module.' prefixes).
-    """
-    weights_path = Path(weights_path)
-    if not weights_path.exists():
-        log.error("weights_file_not_found", extra={"weights_file": str(weights_path)})
-        raise FileNotFoundError(f"Weights file not found: {weights_path}")
-
-    state = torch.load(weights_path, map_location=device)
-    if isinstance(state, dict) and "model_state_dict" in state:
-        state = state["model_state_dict"]
-
-    if isinstance(state, dict) and all(isinstance(k, str) for k in state.keys()):
-        if any(k.startswith("module.") for k in state.keys()):
-            state = {k.replace("module.", "", 1): v for k, v in state.items()}
-
-    model.load_state_dict(state, strict=True)
-    model.to(device)
-    model.eval()
-    log.info("weights_loaded", extra={"weights_file": str(weights_path)})
 
 
 @torch.no_grad()
@@ -477,7 +435,7 @@ def main(argv=None):
     log_env_once()
 
     # 3) Device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(prefer_cuda=True)
     log.info("device_selected", extra={"device": str(device)})
 
     # 4) Data & transforms (test-only)
@@ -497,7 +455,7 @@ def main(argv=None):
     # 7) Model + weights (mirror training; pretrained=False)
     num_classes = len(class_names)
     model = build_model(args.model, num_classes=num_classes, pretrained=False)
-    load_weights(model, args.trained_model, device)  # strict=True inside
+    load_weights(model, args.trained_model, device, strict=True)
 
     # 8) Evaluate
     t0 = time.time()
