@@ -32,28 +32,16 @@ python -m src.pipeline.evaluate \
 
 from __future__ import annotations
 
-from src.utils.logging_utils import get_logger, configure_logging
-from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
-from torch.utils.data import Subset
-import torch
-from torchvision.datasets import ImageFolder
-
-import argparse, numpy as np, json, time
+import argparse
 from pathlib import Path
-from src.utils.paths import OUTPUTS_DIR
-
-from src.core.artifacts import write_evaluation_summary
-from src.core.env import bootstrap_env, log_env_once
-from src.core.mapping import read_index_remap, expected_classes_from_remap
-from src.core.transforms import build_transforms
-from src.core.model import build_model, load_weights, get_device 
-from src.core.data import make_eval_loader
-from src.core.metrics import evaluate, save_classification_report, save_confusions
-from src.core.viz import show_calls_gallery, show_gradcam_gallery
-from src.evaluate.runner import EvalRunnerInputs, run as run_evaluation
-
 from datetime import datetime, timezone
 import os as _os
+
+from src.utils.logging_utils import get_logger, configure_logging
+from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
+from src.utils.paths import OUTPUTS_DIR
+from src.core.env import bootstrap_env, log_env_once
+from src.evaluate.runner import EvalRunnerInputs, run as run_evaluation
 
 log = get_logger(__name__)
 
@@ -122,7 +110,10 @@ def main(argv=None):
         configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="evaluate")
     else:
         configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="evaluate")
-    log.info("evaluate.start", extra={"args": {k: (str(v) if isinstance(v, Path) else v) for k,v in vars(args).items()}})
+    
+    log.info("evaluate.cli_start", extra={
+        "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+    })
 
     bootstrap_env(seed=args.seed)
     log_env_once()
