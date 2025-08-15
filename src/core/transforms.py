@@ -36,15 +36,30 @@ IMAGENET_STD  = (0.229, 0.224, 0.225)
 
 
 
-def build_transforms(image_size: int) -> Dict[str, transforms.Compose]:
+def build_transforms(
+    image_size: int,
+    *,
+    rotate_deg: int = 15,
+    hflip_prob: float = 0.5,
+    jitter_brightness: float = 0.1,
+    jitter_contrast: float = 0.1,
+) -> Dict[str, transforms.Compose]:
     """
-    Build torchvision transforms for train/val/test sets.
+    Build torchvision transforms for train/val/test with configurable augmentation.
 
     Parameters
     ----------
     image_size : int
-        Target square size after your offline resize/pad step. This value
-        should match what was used during preprocessing (e.g., 224).
+        Target square size after offline resize/pad (e.g., 224). Kept for
+        future-proofing if you later add Resize/Crop here.
+    rotate_deg : int
+        Max absolute rotation for RandomRotation. 0 disables rotation.
+    hflip_prob : float
+        Probability for RandomHorizontalFlip. 0.0 disables flipping.
+    jitter_brightness : float
+        Brightness factor for ColorJitter. 0.0 disables brightness jitter.
+    jitter_contrast : float
+        Contrast factor for ColorJitter. 0.0 disables contrast jitter.
 
     Returns
     -------
@@ -53,20 +68,29 @@ def build_transforms(image_size: int) -> Dict[str, transforms.Compose]:
 
     Notes
     -----
-    - We explicitly convert to 3 channels via `Grayscale(num_output_channels=3)`
-      to keep ResNet happy (expects 3-channel input).
-    - Augmentations are intentionally mild (medical imagery).
-    - Normalization uses ImageNet stats to match pretrained backbones.
+    - Grayscale→3 channels to satisfy ImageNet-pretrained backbones.
+    - Eval transforms intentionally exclude augmentation.
     """
-    tf_train = transforms.Compose([
-        transforms.Grayscale(num_output_channels=3),
-        transforms.RandomRotation(15),
-        transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(brightness=0.1, contrast=0.1),
+    train_ops = [transforms.Grayscale(num_output_channels=3)]
+
+    if rotate_deg and rotate_deg != 0:
+        train_ops.append(transforms.RandomRotation(int(rotate_deg)))
+    if hflip_prob and hflip_prob > 0.0:
+        train_ops.append(transforms.RandomHorizontalFlip(p=float(hflip_prob)))
+    if (jitter_brightness and jitter_brightness > 0.0) or (jitter_contrast and jitter_contrast > 0.0):
+        train_ops.append(
+            transforms.ColorJitter(
+                brightness=float(jitter_brightness or 0.0),
+                contrast=float(jitter_contrast or 0.0),
+            )
+        )
+
+    train_ops.extend([
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
 
+    tf_train = transforms.Compose(train_ops)
     tf_eval = transforms.Compose([
         transforms.Grayscale(num_output_channels=3),
         transforms.ToTensor(),
@@ -75,10 +99,14 @@ def build_transforms(image_size: int) -> Dict[str, transforms.Compose]:
 
     tfs = {"train": tf_train, "val": tf_eval, "test": tf_eval}
 
-    # Structured, minimal log for traceability
     log.info("transforms.built", extra={
         "image_size": image_size,
-        "train_aug": ["RandomRotation(15)", "RandomHorizontalFlip", "ColorJitter(0.1,0.1)"],
+        "aug": {
+            "rotate_deg": int(rotate_deg),
+            "hflip_prob": float(hflip_prob),
+            "jitter_brightness": float(jitter_brightness),
+            "jitter_contrast": float(jitter_contrast),
+        },
         "normalize_mean": IMAGENET_MEAN,
         "normalize_std": IMAGENET_STD,
     })

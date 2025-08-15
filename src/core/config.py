@@ -36,6 +36,25 @@ class DataConfig:
     val_frac: float = 0.2
     seed: int = 42
 
+@dataclass
+class AugmentConfig:
+    """
+    Data augmentation knobs for training transforms.
+
+    rotate_deg : int
+        Max absolute degrees for RandomRotation (±rotate_deg). 0 disables.
+    hflip_prob : float
+        Probability for RandomHorizontalFlip. 0 disables.
+    jitter_brightness : float
+        Brightness factor for ColorJitter (range [0, 1]). 0 disables.
+    jitter_contrast : float
+        Contrast factor for ColorJitter (range [0, 1]). 0 disables.
+    """
+    rotate_deg: int = 15
+    hflip_prob: float = 0.5
+    jitter_brightness: float = 0.1
+    jitter_contrast: float = 0.1
+
 
 @dataclass
 class ModelConfig:
@@ -80,6 +99,7 @@ class TrainConfig:
     optim: OptimConfig = field(default_factory=OptimConfig)
     io: TrainIOConfig = field(default_factory=TrainIOConfig)
     loop: TrainLoopConfig = field(default_factory=TrainLoopConfig)
+    aug: AugmentConfig = field(default_factory=AugmentConfig)
     run_id: Optional[str] = None
 
 
@@ -200,6 +220,7 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         optim=OptimConfig(**base.get("optim", {})),
         io=TrainIOConfig(**base.get("io", {})),
         loop=TrainLoopConfig(**base.get("loop", {})),
+        aug=AugmentConfig(**base.get("aug", {})),
         run_id=base.get("run_id"),
     )
 
