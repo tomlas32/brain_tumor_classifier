@@ -1,3 +1,4 @@
+# configs/eval.yaml
 run_id: brain-tumor-exp01-eval
 data:
   image_size: 224
@@ -14,3 +15,13 @@ io:
   make_galleries: true
   make_gradcam: true
   top_per_class: 6
+viz:
+  gallery_cols: 6
+  gradcam_cols: 4
+metrics:
+  average: macro
+  zero_division: 0
+log:
+  level: INFO
+  file: null
+  json: false
