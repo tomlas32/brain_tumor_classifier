@@ -1,0 +1,16 @@
+run_id: brain-tumor-exp01-eval
+data:
+  image_size: 224
+  eval_in: data/test
+  mapping_path: outputs/mappings/index_remap.json
+  batch_size: 32
+  num_workers: 4
+  seed: 42
+model:
+  name: resnet18
+  weights_path: models/best.pth
+io:
+  eval_out: outputs/evaluation
+  make_galleries: true
+  make_gradcam: true
+  top_per_class: 6
