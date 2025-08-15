@@ -108,7 +108,8 @@ def normalize_ext(e: str) -> str:
 def add_common_train_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="(Deprecated) Prefer config.loop.epochs. If provided, overrides config.")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--step-size", type=int, default=5, help="StepLR: step_size (epochs)")
