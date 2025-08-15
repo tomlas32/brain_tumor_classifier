@@ -54,6 +54,7 @@ from src.core.env import bootstrap_env, log_env_once
 from src.core.mapping import read_index_remap, expected_classes_from_remap
 from src.core.transforms import build_transforms
 from src.core.model import build_model, load_weights, get_device 
+from src.core.data import make_eval_loader
 
 import matplotlib.pyplot as plt
 
@@ -94,38 +95,6 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     add_common_eval_args(parser)     # --eval-in, --eval-out, --trained-model
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
-
-
-def _worker_init_fn(worker_id: int):
-    """Deterministically seed each DataLoader worker."""
-    base_seed = torch.initial_seed() % (2**32)
-    np.random.seed(base_seed + worker_id)
-
-
-def make_eval_loader(dataset, batch_size: int, num_workers: int, seed: int) -> DataLoader:
-    """
-    Deterministic, non-shuffled DataLoader for evaluation.
-
-    Returns
-    -------
-    DataLoader
-    """
-    g = torch.Generator()
-    g.manual_seed(seed)
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=(num_workers > 0),
-        worker_init_fn=_worker_init_fn,
-        generator=g,
-    )
-    log.info("eval_loader_created", extra={
-        "num_samples": len(dataset), "batch_size": batch_size, "num_workers": num_workers
-    })
-    return loader
 
 
 @torch.no_grad()

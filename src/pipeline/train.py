@@ -76,18 +76,11 @@ from src.utils.parser_utils import (
     add_model_args,
 )
 from src.pipeline.evaluate import evaluate
+from src.core.data import make_loader
 
 
 log = get_logger(__name__)
 
-
-def worker_init_fn(worker_id: int):
-    """
-    Deterministic DataLoader workers (seed NumPy & random per-worker).
-    """
-    base_seed = torch.initial_seed() % (2**32)
-    np.random.seed(base_seed + worker_id)
-    random.seed(base_seed + worker_id)
 
 def write_training_summary(
     out_summary_dir: Path,
@@ -270,36 +263,6 @@ def make_stratified_subsets(
     val_data = Subset(val_full, val_idx)
 
     return train_data, val_data, full_train.classes, full_train.class_to_idx, per_class_counts
-
-
-def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, seed: int) -> DataLoader:
-    """
-    Create a DataLoader with consistent, deterministic settings.
-
-    Returns
-    -------
-    DataLoader
-    """
-    generator = torch.Generator()
-    generator.manual_seed(seed)
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=(num_workers > 0),
-        worker_init_fn=worker_init_fn,
-        generator=generator,
-    )
-
-    log.info("dataloader_created", extra={
-        "num_samples": len(dataset),
-        "batch_size": batch_size,
-        "shuffle": shuffle,
-        "num_workers": num_workers
-    })
-    return loader
 
 
 def train_loop(
