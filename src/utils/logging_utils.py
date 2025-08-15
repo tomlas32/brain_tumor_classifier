@@ -35,8 +35,8 @@ Usage:
 
 
 Author: Tomasz Lasota
-Date: 2025-08-13
-Version: 1.0
+Date: 2025-08-15
+Version: 1.1
 """
 
 
@@ -44,20 +44,40 @@ import sys
 import logging
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from datetime import datetime, timezone
+from typing import Optional
 from src.utils.paths import OUTPUTS_DIR
 
 
-DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+DEFAULT_FORMAT = "%(asctime)s %(levelname)s [%(stage)s|%(run_id)s] %(name)s %(message)s"
+
+class _ContextFilter(logging.Filter):
+    """Injects run_id and stage into every record."""
+    def __init__(self, run_id: Optional[str], stage: Optional[str]):
+        super().__init__()
+        self.run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+        # Default stage = current script name (without .py)
+        self.stage = stage or (Path(sys.argv[0]).stem or "app")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "run_id"):
+            record.run_id = self.run_id
+        if not hasattr(record, "stage"):
+            record.stage = self.stage
+        return True
 
 def configure_logging(
     log_level: str = "INFO",
     file_mode: str = "auto",          # "auto" | "fixed" | "none"
-    log_subdir: str = "logs",         # subfolder under OUTPUTS_DIR
-    log_file: str | Path | None = None,  # used when file_mode="fixed"
+    log_subdir: str = "logs",
+    log_file: str | Path | None = None,
     fmt: str = DEFAULT_FORMAT,
     max_bytes: int = 5_000_000,
     backup_count: int = 3,
     to_stdout: bool = True,
+    *,
+    run_id: str | None = None,
+    stage: str | None = None,
 ) -> Path | None:
     """
     Configure root logger with stdout and optional rotating file in outputs/logs.
@@ -91,11 +111,13 @@ def configure_logging(
     root.handlers.clear()
 
     formatter = logging.Formatter(fmt)
+    context_filter = _ContextFilter(run_id=run_id, stage=stage)
 
-    # Console (stdout) handler
+    # Console handler
     if to_stdout:
         sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(formatter)
+        sh.addFilter(context_filter)
         root.addHandler(sh)
 
     # Rotating file handler
@@ -108,9 +130,9 @@ def configure_logging(
             encoding="utf-8",
         )
         fh.setFormatter(formatter)
+        fh.addFilter(context_filter)
         root.addHandler(fh)
 
-    # Breadcrumb so you can see where logs go
     logging.getLogger(__name__).info(
         "Logging configured (mode=%s, file=%s)",
         file_mode,
@@ -120,3 +142,4 @@ def configure_logging(
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
+
