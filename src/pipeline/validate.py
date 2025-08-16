@@ -25,14 +25,15 @@ fetch → split → resize → **validate** → train → evaluate
 
 Examples
 --------
-# Validate resized training set with defaults (224px, default extensions)
-python -m src.pipeline.validate --in-dir data/training_resized
+# Config-first
+python -m src.pipeline.validate --config configs/validate.yaml
 
-# Accept any file extension and enable duplicate detection
-python -m src.pipeline.validate --exts all --dup-check
+# Config + overrides
+python -m src.pipeline.validate --config configs/validate.yaml \
+  --override fail_on=error --override exts=.jpg,.png
 
-# Stricter mode: fail on warnings as well
-python -m src.pipeline.validate --fail-on warning
+# Legacy (no config)
+python -m src.pipeline.validate --in-dir data/testing_resized --exts all --dup-check
 """
 
 from __future__ import annotations
@@ -51,7 +52,9 @@ from datetime import datetime, timezone
 from src.utils.logging_utils import get_logger, configure_logging
 from src.utils.parser_utils import parse_exts, add_common_logging_args, DEFAULT_EXTS
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
+
 from src.core.mapping import read_index_remap, expected_classes_from_remap
+from src.core.config import build_validate_config, to_dict
 
 VALIDATION_REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
 
@@ -313,6 +316,11 @@ def main(argv=None) -> int:
     action="store_false",
     help="Disable writing a JSON validation report to outputs/validation_reports/ (enabled by default).",
 )
+    parser.add_argument("--config", type=Path, default=None,
+                    help="Optional YAML config file for validate (config-first).")
+    parser.add_argument("--override", action="append", default=[],
+                        help="Override config values as key=val (e.g., size=256 exts=all fail_on=warning). "
+                            "Repeat for multiple overrides.")
     # default ON
     parser.set_defaults(write_report=True)
 
@@ -328,27 +336,42 @@ def main(argv=None) -> int:
     else:
         configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="validate")
 
+    cfg = build_validate_config(args.config, overrides=args.override)
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    in_dir = cfg.in_dir or args.in_dir
+    index_remap = cfg.index_remap or args.index_remap
+    size = cfg.size if cfg.size is not None else args.size
+    dup_check = cfg.dup_check if cfg.dup_check is not None else args.dup_check
+    warn_low_std = cfg.warn_low_std if cfg.warn_low_std is not None else args.warn_low_std
+    min_file_bytes = cfg.min_file_bytes if cfg.min_file_bytes is not None else args.min_file_bytes
+    fail_on = (cfg.fail_on or args.fail_on).lower()
+    write_report = bool(cfg.write_report) if cfg.write_report is not None else bool(args.write_report)
+
+    # exts: allow list or 'all' from config; otherwise CLI string
+    exts_source = cfg.exts if cfg.exts is not None else args.exts
+
     # Guardrails
-    if not args.in_dir.exists():
-        log.error("validate.in_dir_missing", extra={"in_dir": str(args.in_dir)})
-        print(f"--in-dir not found: {args.in_dir}")
+    if not Path(in_dir).exists():
+        log.error("validate.in_dir_missing", extra={"in_dir": str(in_dir)})
+        print(f"--in-dir not found: {in_dir}")
         return 2
-    if not args.index_remap.exists():
-        log.error("validate.index_remap_missing", extra={"index_remap": str(args.index_remap)})
-        print(f"--index-remap not found: {args.index_remap}")
+    if not Path(index_remap).exists():
+        log.error("validate.index_remap_missing", extra={"index_remap": str(index_remap)})
+        print(f"--index-remap not found: {index_remap}")
         return 2
 
     summary = validate_dataset(
-        in_dir=args.in_dir,
-        index_remap_path=args.index_remap,
-        size=args.size,
-        exts=args.exts,
-        dup_check=args.dup_check,
-        warn_low_std=args.warn_low_std,
-        min_file_bytes=args.min_file_bytes,
+        in_dir=in_dir,
+        index_remap_path=index_remap,
+        size=size,
+        exts=exts_source,
+        dup_check=dup_check,
+        warn_low_std=warn_low_std,
+        min_file_bytes=min_file_bytes,
     )
 
-    if args.write_report:
+    if write_report:
         VALIDATION_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
         report_path = VALIDATION_REPORTS_DIR / f"validation_{run_id}_{ts}.json"
@@ -364,9 +387,9 @@ def main(argv=None) -> int:
         f"Warnings: {summary['warnings']}"
     )
 
-    if args.fail_on == "error" and summary["errors"] > 0:
+    if fail_on == "error" and summary["errors"] > 0:
         return 1
-    if args.fail_on == "warning" and (summary["errors"] > 0 or summary["warnings"] > 0):
+    if fail_on == "warning" and (summary["errors"] > 0 or summary["warnings"] > 0):
         return 1
     return 0
 

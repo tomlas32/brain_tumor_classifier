@@ -26,6 +26,41 @@ import yaml  # PyYAML
 # ----------------------- Dataclasses (typed schema) ---------------------------
 
 @dataclass
+class ValidateConfig:
+    """
+    Config for the 'validate' stage.
+
+    in_dir : Path
+        Root directory to validate (e.g., data/training_resized).
+    index_remap : Path
+        Path to index_remap.json with allowed class names.
+    size : int
+        Expected square image size.
+    exts : list[str] | str | null
+        Allowed extensions: list like ['.jpg','.png'], or 'all', or null.
+    dup_check : bool
+        Enable SHA-1 duplicate detection (warning-level).
+    warn_low_std : float
+        Warn if per-image std < this threshold.
+    min_file_bytes : int
+        Warn if file size < this many bytes.
+    fail_on : {'error','warning','never'}
+        Exit policy.
+    write_report : bool
+        Write JSON report to outputs/validation_reports/.
+    """
+    in_dir: Optional[Path] = None
+    index_remap: Optional[Path] = None
+    size: int = 224
+    exts: Optional[object] = None  # list[str] | "all" | None
+    dup_check: bool = False
+    warn_low_std: float = 3.0
+    min_file_bytes: int = 1024
+    fail_on: str = "error"
+    write_report: bool = True
+
+
+@dataclass
 class ResizeConfig:
     """
     Config for the 'resize' stage.
@@ -415,6 +450,41 @@ def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> Resi
         test_out=_p(base.get("test_out")),
         size=int(base.get("size", 224)),
         exts=base.get("exts"),  # leave as-is; script will parse via parse_exts()
+    )
+
+def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> ValidateConfig:
+    """
+    Build a ValidateConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {
+        "in_dir": None,
+        "index_remap": None,
+        "size": 224,
+        "exts": None,
+        "dup_check": False,
+        "warn_low_std": 3.0,
+        "min_file_bytes": 1024,
+        "fail_on": "error",
+        "write_report": True,
+    }
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    def _p(x): return Path(x) if x is not None else None
+    return ValidateConfig(
+        in_dir=_p(base.get("in_dir")),
+        index_remap=_p(base.get("index_remap")),
+        size=int(base.get("size", 224)),
+        exts=base.get("exts"),  # leave parsing to validate.py via parse_exts()
+        dup_check=bool(base.get("dup_check", False)),
+        warn_low_std=float(base.get("warn_low_std", 3.0)),
+        min_file_bytes=int(base.get("min_file_bytes", 1024)),
+        fail_on=str(base.get("fail_on", "error")),
+        write_report=bool(base.get("write_report", True)),
     )
 
 

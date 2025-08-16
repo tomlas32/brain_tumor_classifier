@@ -1,0 +1,9 @@
+in_dir: data/training_resized
+index_remap: outputs/mappings/latest.json
+size: 224
+exts: all
+dup_check: true
+warn_low_std: 3.0
+min_file_bytes: 1024
+fail_on: warning
+write_report: true
