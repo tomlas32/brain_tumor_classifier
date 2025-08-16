@@ -11,6 +11,12 @@ Pools images from --training-dir and --testing-dir, creates a random split with
 - Ensures at least one test image for any non-empty class.
 - Avoids filename collisions by appending a numeric suffix.
 
+Notes:
+-----
+- Reads standardized *fetch pointer* from outputs/pointers/fetch/<owner>/<slug>/latest.json
+- Writes standardized *mapping pointer* to outputs/pointers/mapping/<owner>/<slug>/{latest.json,history/...}
+
+
 Example:
 # Config-first
 python -m src.pipeline.split --config configs/split.yaml
@@ -24,11 +30,11 @@ python -m src.pipeline.split --dataset owner/name --test-frac 0.2
 
 Author: Tomasz Lasota
 Date: 2025-08-16
-Version: 1.2  
+Version: 1.3  
 """
 
 from pathlib import Path
-import argparse, random, shutil, time, json, os, random
+import argparse, random, shutil, time, os
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -39,12 +45,13 @@ from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_
 
 from src.core.mapping import write_index_remap as mapping_write_index_remap, copy_index_remap
 from src.core.config import build_split_config, to_dict
+from src.core.artifacts import read_fetch_pointer, write_mapping_pointer
 
 log = get_logger(__name__)
 
 def _pointer_path_for(slug: str) -> Path:
-    owner, name = (slug.split("/", 1) if "/" in slug else ("unknown", slug))
-    return OUTPUTS_DIR / "downloads_pointer" / owner / name / "latest.json"
+    owner, name = (slug.split("/", 1) if "/" in slug else ("_unknown_", slug))
+    return OUTPUTS_DIR / "pointers" / "fetch" / owner / name / "latest.json"
 
 def _empty_dir(d: Path) -> None:
     if not d.exists():
@@ -211,22 +218,32 @@ def main(argv=None) -> int:
         "mapping_write_split_copy": bool(cfg.mapping_write_split_copy),
     })
 
-    if not pointer.exists():
-        log.error("split.pointer_missing", extra={"pointer": str(pointer)})
-        return 2
-
     try:
-        meta = json.loads(pointer.read_text(encoding="utf-8"))
+        fetch_ptr = read_fetch_pointer(pointer)
     except Exception as e:
         log.error("split.pointer_read_error", extra={"pointer": str(pointer), "error": str(e)})
         return 2
 
-    try:
-        src_training = Path(meta["training_dir"])
-        src_testing  = Path(meta["testing_dir"])
-    except KeyError as e:
-        log.error("split.pointer_key_error", extra={"missing": str(e), "pointer": str(pointer)})
+    dataset_root = Path(fetch_ptr["dataset_root"])
+    # Prefer explicit dirs if present; otherwise try conventional subfolders
+    src_training = Path(fetch_ptr.get("training_dir") or (dataset_root / "Training"))
+    src_testing  = Path(fetch_ptr.get("testing_dir")  or (dataset_root / "Testing"))
+
+    if not src_training.exists() or not src_testing.exists():
+        log.error("split.source_dirs_missing", extra={
+            "src_training": str(src_training),
+            "src_testing": str(src_testing),
+            "dataset_root": str(dataset_root),
+        })
         return 2
+
+    log.info("split.fetch_pointer_loaded", extra={
+        "pointer": str(pointer),
+        "dataset": fetch_ptr.get("dataset"),
+        "dataset_root": str(dataset_root),
+        "src_training": str(src_training),
+        "src_testing": str(src_testing),
+    })
 
     log.info("split.started", extra={"dataset": dataset_slug, "pointer": str(pointer), 
                                      "test_frac": test_frac, "seed": seed, "exts": sorted(exts) if exts else ["<any>"]})
@@ -273,15 +290,35 @@ def main(argv=None) -> int:
 
     # 3) Build & write mapping (shared core), optionally copy elsewhere
     try:
-        _build_and_write_mapping(
-        split_root=DATA_DIR,
-        prefer_subset="training",
-        dataset=dataset_slug if cfg.mapping_use_dataset_subdir else None,
-        use_dataset_subdir=bool(cfg.mapping_use_dataset_subdir),
-        write_split_copy=bool(cfg.mapping_write_split_copy),
-        also_save_project_root=save_remap_to_project_root,
-        project_root_path=Path("index_remap.json"),
-)
+        latest_map_path = _build_and_write_mapping(
+            split_root=DATA_DIR,
+            prefer_subset="training",
+            dataset=dataset_slug if cfg.mapping_use_dataset_subdir else None,
+            use_dataset_subdir=bool(cfg.mapping_use_dataset_subdir),
+            write_split_copy=bool(cfg.mapping_write_split_copy),
+            also_save_project_root=save_remap_to_project_root,
+            project_root_path=Path("index_remap.json"),
+        )
+
+        # After index_remap.json is finalized, write standardized mapping pointer.
+        ordered_classes = _class_names_from_dir(DATA_DIR / "training")
+        try:
+            ptr_out = write_mapping_pointer(
+                classes=ordered_classes,
+                index_remap_path=latest_map_path,
+                dataset=fetch_ptr.get("dataset"),
+                index_remap=None,  # or embed {idx: cls} if you want
+                run_id=run_id,
+                dst_dir=None,      # → outputs/pointers/mapping/<owner>/<slug>/
+            )
+            log.info("split.mapping_pointer_written", extra={
+                "latest": str(ptr_out.get("latest_path")),
+                "history": str(ptr_out.get("history_path")),
+                "run_id": run_id,
+            })
+        except Exception as e:
+            log.warning("split.mapping_pointer_write_failed", extra={"error": str(e), "run_id": run_id})
+
     except Exception as e:
         log.error("split.index_remap.failed", extra={"error": str(e)})
         return 2
