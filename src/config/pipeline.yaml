@@ -1,0 +1,86 @@
+# Master pipeline configuration for brain tumor classification
+
+run_id: bt-exp-001
+
+env:
+  seed: 42
+  prefer_cuda: true
+  cudnn_deterministic: true
+  cudnn_benchmark: false
+
+log:
+  level: INFO
+  file: null     # Or set to outputs/logs/pipeline.log
+  json: false
+
+fetch:
+  dataset: sartajbhuvaji/brain-tumor-classification-mri
+  cache_dir: data
+  write_pointer: true
+
+split:
+  dataset: sartajbhuvaji/brain-tumor-classification-mri
+  test_frac: 0.20
+  clear_dest: true
+  exts: [".jpg", ".jpeg", ".png"]
+
+resize:
+  in_dir: data/combined_split_simple
+  out_dir: data/training_resized
+  size: 224
+  exts: all
+
+validate:
+  in_dir: data/training_resized
+  index_remap: outputs/mappings/latest.json
+  size: 224
+  fail_on: warning
+  warn_low_std: 3.0
+  min_file_bytes: 1024
+  dup_check: false
+
+train:
+  data:
+    image_size: 224
+    train_in: data/training_resized
+    mapping_path: outputs/mappings/latest.json
+    batch_size: 32
+    num_workers: 4
+    val_frac: 0.2
+    seed: 42
+  model:
+    name: resnet18
+    pretrained: true
+  optim:
+    lr: 0.001
+    weight_decay: 0.0001
+    step_size: 10
+    gamma: 0.1
+    amp: true
+  io:
+    out_models: models
+    out_summary: outputs/training
+  loop:
+    epochs: 20
+  aug:
+    rotate_deg: 10
+    hflip_prob: 0.5
+    jitter_brightness: 0.05
+    jitter_contrast: 0.05
+
+evaluate:
+  data:
+    image_size: 224
+    eval_in: data/testing_resized
+    mapping_path: outputs/mappings/latest.json
+    batch_size: 32
+    num_workers: 4
+    seed: 42
+  model:
+    name: resnet18
+    weights_path: models/best.pth
+  io:
+    eval_out: outputs/evaluation
+    make_galleries: true
+    make_gradcam: true
+    top_per_class: 6

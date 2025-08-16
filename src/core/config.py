@@ -227,6 +227,76 @@ class EvalConfig:
     io: EvalIOConfig = field(default_factory=EvalIOConfig)
     run_id: Optional[str] = None
 
+@dataclass
+class EnvConfig:
+    """
+    Environment knobs applied once at pipeline start (orchestrator).
+
+    seed : int
+        Global RNG seed (propagated to stages via bootstrap_env()).
+    prefer_cuda : bool
+        If True, the orchestrator will prefer CUDA devices when available.
+    cudnn_deterministic : bool
+        cuDNN determinism flag (True for reproducibility).
+    cudnn_benchmark : bool
+        cuDNN autotuner (False for reproducibility).
+    """
+    seed: int = 42
+    prefer_cuda: bool = True
+    cudnn_deterministic: bool = True
+    cudnn_benchmark: bool = False
+
+
+@dataclass
+class LoggingConfig:
+    """
+    Logging defaults applied by the orchestrator.
+
+    level : str
+        Log level (e.g., 'INFO', 'DEBUG').
+    file : Optional[str]
+        Optional fixed log file path. If None, each stage decides (your code
+        already supports auto/fixed in configure_logging()).
+    json : bool
+        Future toggle for JSON logs if you add a JSON formatter.
+    """
+    level: str = "INFO"
+    file: Optional[str] = None
+    json: bool = False
+
+class MasterConfig:
+    """
+    End-to-end pipeline configuration.
+
+    This nests per-stage configs (fetch → split → resize → validate → train → evaluate)
+    plus top-level run, environment, and logging defaults.
+
+    Notes on logging
+    ----------------
+    The orchestrator should log a single 'config.resolved' entry with
+    the fully merged MasterConfig (use `to_dict()`), then pass the
+    relevant sub-configs to each stage. Stages can still log their own
+    resolved configs for local provenance; redundancy is fine.
+
+    Overriding behavior
+    -------------------
+    - CLI overrides apply to the master structure with dotted keys, e.g.:
+      `train.data.image_size=256`, `resize.size=224`, `log.level=DEBUG`.
+    - In Step 2 we’ll make the orchestrator optionally propagate
+      `run_id` down into child configs if they don’t set one.
+    """
+    run_id: Optional[str] = None
+    env: EnvConfig = field(default_factory=EnvConfig)
+    log: LoggingConfig = field(default_factory=LoggingConfig)
+
+    # Per-stage blocks (you already defined these dataclasses & builders):
+    fetch: "FetchConfig" = field(default_factory=lambda: FetchConfig())
+    split: "SplitConfig" = field(default_factory=lambda: SplitConfig())
+    resize: "ResizeConfig" = field(default_factory=lambda: ResizeConfig())
+    validate: "ValidateConfig" = field(default_factory=lambda: ValidateConfig())
+    train: "TrainConfig" = field(default_factory=lambda: TrainConfig())
+    evaluate: "EvalConfig" = field(default_factory=lambda: EvalConfig())
+
 
 # ----------------------- Loader / overrides / utils ---------------------------
 
@@ -485,6 +555,70 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         min_file_bytes=int(base.get("min_file_bytes", 1024)),
         fail_on=str(base.get("fail_on", "error")),
         write_report=bool(base.get("write_report", True)),
+    )
+
+def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:
+    """
+    Build a MasterConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+
+    Parameters
+    ----------
+    yaml_path : Optional[Path]
+        Path to a master YAML. If None, defaults are used and only overrides apply.
+    overrides : list[str]
+        Dotted key overrides, e.g.:
+        - "train.data.image_size=256"
+        - "resize.size=224"
+        - "log.level=DEBUG"
+        - "env.seed=1337"
+
+    Returns
+    -------
+    MasterConfig
+        Fully materialized master config object.
+
+    Logging
+    -------
+    This function does not log; the caller (orchestrator) should log:
+      log.info("config.resolved", extra={"config": to_dict(master_cfg)})
+    """
+    # Start from defaults of the full master structure
+    base = _to_nested_dict(MasterConfig())  # uses asdict on all nested dataclasses
+
+    # Merge YAML (if provided)
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg or {})
+
+    # Apply CLI overrides last
+    base = apply_overrides(base, overrides or [])
+
+    # Reconstruct nested dataclasses from the merged dict
+    return MasterConfig(
+        run_id=base.get("run_id"),
+        env=EnvConfig(**base.get("env", {})),
+        log=LoggingConfig(**base.get("log", {})),
+        fetch=FetchConfig(**base.get("fetch", {})),
+        split=SplitConfig(**base.get("split", {})),
+        resize=ResizeConfig(**base.get("resize", {})),
+        validate=ValidateConfig(**base.get("validate", {})),
+        train=TrainConfig(
+            data=DataConfig(**base.get("train", {}).get("data", {})),
+            model=ModelConfig(**base.get("train", {}).get("model", {})),
+            optim=OptimConfig(**base.get("train", {}).get("optim", {})),
+            io=TrainIOConfig(**base.get("train", {}).get("io", {})),
+            loop=TrainLoopConfig(**base.get("train", {}).get("loop", {})),
+            aug=AugmentConfig(**base.get("train", {}).get("aug", {})),
+            run_id=base.get("train", {}).get("run_id"),
+        ),
+        evaluate=EvalConfig(
+            data=DataConfig(**base.get("evaluate", {}).get("data", {})),
+            model=ModelConfig(**base.get("evaluate", {}).get("model", {})),
+            io=EvalIOConfig(**base.get("evaluate", {}).get("io", {})),
+            run_id=base.get("evaluate", {}).get("run_id"),
+        ),
     )
 
 

@@ -9,7 +9,7 @@ Each command:
 
 
 import typer
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
 from src.pipeline import fetch as fetch_mod
@@ -18,6 +18,7 @@ from src.pipeline import resize as resize_mod
 from src.pipeline import validate as validate_mod
 from src.pipeline import train as train_mod
 from src.pipeline import evaluate as evaluate_mod
+from src.pipeline.orchestrator import run_pipeline
 
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
 from src.utils.configs import DEFAULT_DATASET
@@ -441,8 +442,72 @@ def evaluate(
         argv += ["--no-gradcam"]
 
     log.info("cli.dispatch", extra={"stage": "evaluate", "argv": argv})
-    
+
     code = evaluate_mod.main(argv)  # calls src/pipeline/evaluate.py:main(argv)
+    raise typer.Exit(code)
+
+@app.command()
+def pipeline(
+    # Master config + overrides
+    config: Optional[Path] = typer.Option(
+        None, help="Master YAML for the full pipeline (fetch→split→resize→validate→train→evaluate)."
+    ),
+    override: List[str] = typer.Option(
+        [], "--override", "-o",
+        help="Override master config: dotted keys like train.data.image_size=256 "
+             "(repeatable)."
+    ),
+
+    # Execution controls
+    dry_run: bool = typer.Option(
+        False, help="Plan only; do not run any stage."
+    ),
+    skip: List[str] = typer.Option(
+        [], help="Stages to skip entirely (ignored if --resume-from is set). "
+                 "Choices: fetch, split, resize, validate, train, evaluate"
+    ),
+    resume_from: Optional[str] = typer.Option(
+        None, help="Start from this stage; earlier stages are skipped."
+    ),
+):
+    """
+    Run the full pipeline from a single master config.
+
+    Examples
+    --------
+    - Dry run (show plan only):
+      python -m src.cli pipeline --config configs/pipeline.yaml --dry-run
+
+    - Full run:
+      python -m src.cli pipeline --config configs/pipeline.yaml
+
+    - Resume from resize:
+      python -m src.cli pipeline --config configs/pipeline.yaml --resume-from resize
+
+    - Skip fetch/split:
+      python -m src.cli pipeline --config configs/pipeline.yaml --skip fetch --skip split
+
+    - Tweak with overrides:
+      python -m src.cli pipeline --config configs/pipeline.yaml \
+        -o train.aug.rotate_deg=5 -o evaluate.io.top_per_class=10
+    """
+    # Structured dispatch log (best-practice)
+    argv_preview = {
+        "config": str(config) if config else None,
+        "override": override,
+        "dry_run": bool(dry_run),
+        "skip": skip,
+        "resume_from": resume_from,
+    }
+    log.info("cli.dispatch", extra={"stage": "pipeline", "argv": argv_preview})
+
+    code = run_pipeline(
+        master_yaml=config,
+        overrides=override,
+        dry_run=dry_run,
+        skip=skip,
+        resume_from=resume_from,
+    )
     raise typer.Exit(code)
 
 

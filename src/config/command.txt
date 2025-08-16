@@ -1,0 +1,19 @@
+
+DRY RUN
+python -m src.cli pipeline --config configs/pipeline.yaml --dry-run
+
+FULL END-TO-END
+python -m src.cli pipeline --config configs/pipeline.yaml
+
+SKIP EARLY STAGE 
+python -m src.cli pipeline --config configs/pipeline.yaml --skip fetch --skip split
+
+
+RESUME RESIZE
+python -m src.cli pipeline --config configs/pipeline.yaml --resume-from resize
+
+
+OVERRIDES VALUES ON THE FLY
+python -m src.cli pipeline --config configs/pipeline.yaml \
+  -o train.loop.epochs=5 \
+  -o evaluate.io.make_gradcam=false
