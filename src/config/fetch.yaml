@@ -1,0 +1,4 @@
+dataset: sartajbhuvaji/brain-tumor-classification-mri
+cache_dir: data
+write_pointer: true
+pointer_dir: outputs/downloads_pointer/sartajbhuvaji/brain-tumor-classification-mri

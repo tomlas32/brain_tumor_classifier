@@ -26,6 +26,28 @@ import yaml  # PyYAML
 # ----------------------- Dataclasses (typed schema) ---------------------------
 
 @dataclass
+class FetchConfig:
+    """
+    Config for the 'fetch' stage.
+
+    Parameters
+    ----------
+    dataset : str | None
+        Kaggle slug 'owner/dataset'. If None, the script's CLI default is used.
+    cache_dir : Path | None
+        Destination cache dir for KaggleHub (defaults to DATA_DIR in fetch.py if None).
+    write_pointer : bool
+        Whether to write latest/history handoff JSONs.
+    pointer_dir : Path | None
+        Directory to place the handoff pointers. If None, uses the default
+        outputs/downloads_pointer/<owner>/<slug>/.
+    """
+    dataset: Optional[str] = None
+    cache_dir: Optional[Path] = None
+    write_pointer: bool = True
+    pointer_dir: Optional[Path] = None
+
+@dataclass
 class DataConfig:
     image_size: int = 224
     train_in: Optional[Path] = None   # training root (class folders)
@@ -222,6 +244,27 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         loop=TrainLoopConfig(**base.get("loop", {})),
         aug=AugmentConfig(**base.get("aug", {})),
         run_id=base.get("run_id"),
+    )
+
+def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> FetchConfig:
+    """
+    Build a FetchConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {"dataset": None, "cache_dir": None, "write_pointer": True, "pointer_dir": None}
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+    # Normalize Path-like fields
+    cache_dir = Path(base["cache_dir"]) if base.get("cache_dir") else None
+    pointer_dir = Path(base["pointer_dir"]) if base.get("pointer_dir") else None
+    return FetchConfig(
+        dataset=base.get("dataset"),
+        cache_dir=cache_dir,
+        write_pointer=bool(base.get("write_pointer", True)),
+        pointer_dir=pointer_dir,
     )
 
 

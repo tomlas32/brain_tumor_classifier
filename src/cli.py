@@ -237,6 +237,16 @@ def train(
     model: str = "resnet18",           # choices: resnet18 | resnet34 | resnet50
     pretrained: bool = True,
 
+    # config-first controls
+    config: Optional[Path] = typer.Option(
+        None, help="Optional YAML config file (config-first)."
+    ),
+    override: list[str] = typer.Option(
+        [], "--override", "-o",
+        help="Override config values as key=val (e.g., model.name=resnet50 io.out_models=models/x). "
+             "Repeat for multiple overrides."
+    ),
+
     # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
@@ -257,6 +267,11 @@ def train(
 
     # Change LR/scheduler and disable AMP
     python -m src.cli train --lr 3e-4 --step-size 10 --gamma 0.3 --amp False
+
+    Config-first usage:
+    -------------------
+    python -m src.cli train --config configs/train.yaml
+    python -m src.cli train --config configs/train.yaml -o model.name=resnet50 -o optim.lr=3e-4
 
     # Custom paths
     python -m src.cli train --train-in data/training_resized --out-models models/brain_tumor
@@ -290,6 +305,12 @@ def train(
     if log_file:
         argv += ["--log-file", str(log_file)]
 
+    # NEW: config-first pass-through
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
+
     code = train_mod.main(argv)   # calls src/training/train.py:main(argv)
     raise typer.Exit(code)
 
@@ -301,11 +322,20 @@ def evaluate(
     model: str = "resnet18",  # resnet18 | resnet34 | resnet50
     mapping_path: Path = DEFAULT_INDEX_REMAP,
     image_size: int = 224,
-    batch_size: int = 64,
+    batch_size: int = 32,
     num_workers: int = 4,
     seed: int = 42,
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    # config-first controls
+    config: Optional[Path] = typer.Option(
+        None, help="Optional YAML config file (config-first)."
+    ),
+    override: list[str] = typer.Option(
+        [], "--override", "-o",
+        help="Override config values as key=val (e.g., io.top_per_class=10 io.make_gradcam=false). "
+             "Repeat for multiple overrides."
+    ),
 ):
     """
     Evaluate a trained model on the resized test set.
@@ -316,6 +346,11 @@ def evaluate(
     --------
     # Default evaluation
     python -m src.cli evaluate
+
+    Config-first usage:
+    -------------------
+    python -m src.cli evaluate --config configs/eval.yaml
+    python -m src.cli evaluate --config configs/eval.yaml -o io.top_per_class=10 -o io.make_gradcam=false
 
     # Custom model checkpoint
     python -m src.cli evaluate --trained-model models/resnet50_best.pth --model resnet50
@@ -337,6 +372,12 @@ def evaluate(
     ]
     if log_file:
         argv += ["--log-file", str(log_file)]
+    
+    # config-first pass-through
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
 
     code = evaluate_mod.main(argv)  # calls src/pipeline/evaluate.py:main(argv)
     raise typer.Exit(code)

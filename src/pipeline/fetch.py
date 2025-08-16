@@ -43,6 +43,16 @@ python -m src.pipeline.fetch --dataset owner/name --cache-dir data
 
 # Write handoff pointer into a custom folder
 python -m src.pipeline.fetch --pointer-dir outputs/pointers/my_exp
+
+# Config-first
+python -m src.pipeline.fetch --config configs/fetch.yaml
+
+# Config + overrides (flip pointer off)
+python -m src.pipeline.fetch --config configs/fetch.yaml \
+  --override write_pointer=false
+
+# Legacy still works (no config)
+python -m src.pipeline.fetch --dataset owner/name --cache-dir data
 """
 
 from __future__ import annotations
@@ -57,6 +67,8 @@ from src.utils.configs import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
+
+from src.core.config import build_fetch_config, to_dict
 
 log = get_logger(__name__)
 POINTER_DIR = OUTPUTS_DIR / "downloads_pointer"
@@ -187,6 +199,11 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
                         help="Skip writing outputs/downloads_pointer/.../latest.json")
     parser.add_argument("--pointer-dir", type=Path, default=None,
                         help="Override destination directory for pointer JSONs")
+    parser.add_argument("--config", type=Path, default=None,
+                    help="Optional YAML config file for fetch (config-first).")
+    parser.add_argument("--override", action="append", default=[],
+                        help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). "
+                            "Repeat for multiple overrides.")
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
 
@@ -249,16 +266,25 @@ def main(argv=None) -> int:
     else:
         configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="fetch")
 
+    # Resolve config (config-first with CLI fallback)
+    cfg = build_fetch_config(args.config, overrides=args.override)
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    dataset = cfg.dataset or args.dataset
+    cache_dir = Path(cfg.cache_dir) if cfg.cache_dir else Path(args.cache_dir)
+    write_pointer = bool(cfg.write_pointer)
+    pointer_dir = cfg.pointer_dir or args.pointer_dir
+    
     try:
-        target = fetch_kaggle(dataset=args.dataset, cache_dir=Path(args.cache_dir))
-        if not args.no_pointer:
+        target = fetch_kaggle(dataset=dataset, cache_dir=cache_dir)
+        if write_pointer and not args.no_pointer:  # keep legacy flag respected too
             write_latest_fetch_json(
-                dataset=args.dataset,
+                dataset=dataset,
                 dataset_root=target,
-                cache_dir=Path(args.cache_dir),
-                dst_dir=args.pointer_dir,
+                cache_dir=cache_dir,
+                dst_dir=pointer_dir,
             )
-        print(target)  # keep simple stdout output for shell pipelines
+        print(target)
         return 0
 
     except Exception as e:
