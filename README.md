@@ -210,3 +210,5 @@ Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 an
 ## 📝 License
 
 MIT License © 2025 — Contributions welcome.
+
+Data was derived from [Kaggle](https://www.kaggle.com/datasets/sartajbhuvaji/brain-tumor-classification-mri)
