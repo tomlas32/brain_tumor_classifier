@@ -176,6 +176,86 @@ class AugmentConfig:
 
 
 @dataclass
+class EarlyStoppingCfg:
+    """
+    Early stopping configuration.
+
+    Parameters
+    ----------
+    enabled : bool
+        Whether early stopping is active.
+    patience : int
+        Number of epochs with no improvement before stopping.
+    min_delta : float
+        Minimum improvement required to reset the patience counter.
+    monitor : str
+        Metric key to monitor (runner logs use 'val_f1').
+    """
+    enabled: bool = False
+    patience: int = 5
+    min_delta: float = 0.0
+    monitor: str = "val_f1"
+
+
+@dataclass
+class CheckpointCfg:
+    """
+    Checkpointing configuration.
+
+    Parameters
+    ----------
+    save_best : bool
+        Save a checkpoint whenever the monitored metric improves.
+    save_last : bool
+        Save a 'last.pth' checkpoint at the end of each epoch.
+    every_n_epochs : int
+        Periodic checkpointing interval (0 disables).
+    out_dir : Path | None
+        Optional override of the models output directory.
+    """
+    save_best: bool = True
+    save_last: bool = False
+    every_n_epochs: int = 0
+    out_dir: Optional[Path] = None
+
+
+@dataclass
+class LRLoggerCfg:
+    """
+    Learning rate logging configuration.
+
+    Parameters
+    ----------
+    enabled : bool
+        Record LR each epoch and write a JSON trace at train end.
+    out_json : Path | None
+        Optional custom JSON path; defaults under training summary dir.
+    """
+    enabled: bool = True
+    out_json: Optional[Path] = None
+
+
+@dataclass
+class CallbacksConfig:
+    """
+    Aggregate callbacks configuration block attached to TrainConfig.
+
+    Fields
+    ------
+    early_stopping : EarlyStoppingCfg
+        Early stopping options.
+    checkpoint : CheckpointCfg
+        Checkpoint saving options.
+    lr_logger : LRLoggerCfg
+        Learning rate logging options.
+    """
+    early_stopping: EarlyStoppingCfg = field(default_factory=EarlyStoppingCfg)
+    checkpoint: CheckpointCfg = field(default_factory=CheckpointCfg)
+    lr_logger: LRLoggerCfg = field(default_factory=LRLoggerCfg)
+
+
+
+@dataclass
 class ModelConfig:
     name: str = "resnet18"            # resnet18|resnet34|resnet50
     pretrained: bool = True
@@ -219,6 +299,7 @@ class TrainConfig:
     io: TrainIOConfig = field(default_factory=TrainIOConfig)
     loop: TrainLoopConfig = field(default_factory=TrainLoopConfig)
     aug: AugmentConfig = field(default_factory=AugmentConfig)
+    callbacks: CallbacksConfig = field(default_factory=CallbacksConfig)
     run_id: Optional[str] = None
 
 
@@ -398,12 +479,20 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
 
     Priority: defaults < YAML < overrides.
     """
-    base = _to_nested_dict(TrainConfig())  # defaults
+    base = _to_nested_dict(TrainConfig())  # defaults (now includes callbacks)
     if yaml_path:
         yaml_cfg = load_yaml_config(yaml_path)
         _deep_update(base, yaml_cfg)
     base = apply_overrides(base, overrides)
-    # Convert nested dict → dataclass
+
+    # Rebuild nested callbacks block explicitly to ensure typed dataclasses
+    cb = base.get("callbacks", {}) or {}
+    callbacks = CallbacksConfig(
+        early_stopping=EarlyStoppingCfg(**(cb.get("early_stopping", {}) or {})),
+        checkpoint=CheckpointCfg(**(cb.get("checkpoint", {}) or {})),
+        lr_logger=LRLoggerCfg(**(cb.get("lr_logger", {}) or {})),
+    )
+
     return TrainConfig(
         data=DataConfig(**base.get("data", {})),
         model=ModelConfig(**base.get("model", {})),
@@ -411,6 +500,7 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         io=TrainIOConfig(**base.get("io", {})),
         loop=TrainLoopConfig(**base.get("loop", {})),
         aug=AugmentConfig(**base.get("aug", {})),
+        callbacks=callbacks,  # ← NEW
         run_id=base.get("run_id"),
     )
 
@@ -615,6 +705,11 @@ def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> Mast
             io=TrainIOConfig(**base.get("train", {}).get("io", {})),
             loop=TrainLoopConfig(**base.get("train", {}).get("loop", {})),
             aug=AugmentConfig(**base.get("train", {}).get("aug", {})),
+            callbacks=CallbacksConfig(
+                early_stopping=EarlyStoppingCfg(**base.get("train", {}).get("callbacks", {}).get("early_stopping", {})),
+                checkpoint=CheckpointCfg(**base.get("train", {}).get("callbacks", {}).get("checkpoint", {})),
+                lr_logger=LRLoggerCfg(**base.get("train", {}).get("callbacks", {}).get("lr_logger", {})),
+            ),
             run_id=base.get("train", {}).get("run_id"),
         ),
         evaluate=EvalConfig(

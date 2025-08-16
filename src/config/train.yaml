@@ -2,49 +2,60 @@
 run_id: brain-tumor-exp01
 data:
   train_in: data/training_resized
+  # If this is a directory of pointer files, either switch this to the actual file:
+  # mapping_path: outputs/mappings/latest.json
   mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
   image_size: 224
   batch_size: 32
   num_workers: 4
   val_frac: 0.2
-  # class_weights: auto   # or [1.0, 0.8, 1.2, ...]
+
 aug:
   rotate_deg: 15
   hflip_prob: 0.5
   jitter_brightness: 0.1
   jitter_contrast: 0.1
+
 model:
   name: resnet18
   pretrained: true
+
 optim:
   lr: 0.001
   weight_decay: 0.0001
   amp: true
-  grad_accum_steps: 1
-  max_grad_norm: null   # e.g., 1.0 to enable clipping
-sched:
-  name: steplr
-  params:
-    step_size: 10
-    gamma: 0.1
+  # For your current runner, put scheduler params here (or override via CLI):
+  step_size: 10
+  gamma: 0.1
+
 io:
   out_models: models
   out_summary: outputs/training
+
 loop:
   epochs: 20
-  early_stop:
-    patience: 0        # 0 disables
-    min_delta: 0.0
-  checkpoint:
-    metric: f1_macro
-    mode: max
-    filename_tpl: "best_{metric:.4f}_epoch{epoch}.pth"
+
 env:
   prefer_cuda: true
   cudnn_deterministic: true
   cudnn_benchmark: false
+
 log:
   level: INFO
-  file: null           # or "logs/train.log"
+  file: null
   json: false
-                                   # <--
+
+callbacks:
+  early_stopping:
+    enabled: true
+    patience: 5
+    min_delta: 0.002
+    monitor: val_f1
+  checkpoint:
+    save_best: true
+    save_last: true
+    every_n_epochs: 0
+    # out_dir: models/checkpoints
+  lr_logger:
+    enabled: true
+

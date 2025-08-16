@@ -47,6 +47,14 @@ from src.core.transforms import build_transforms
 from src.core.data import make_loader
 from src.core.metrics import evaluate
 from src.core.model import build_model, get_device
+from src.core.callbacks import (
+    EarlyStoppingConfig as _ESCfg,
+    CheckpointConfig as _CkptCfg,
+    LRLoggerConfig as _LRCfg,
+    EarlyStoppingCallback,
+    CheckpointCallback,
+    LRLoggerCallback,
+)
 from src.core.mapping import (
     read_index_remap,
     expected_classes_from_remap,
@@ -143,6 +151,34 @@ def _stratified_split(full_ds: ImageFolder, val_frac: float, seed: int) -> Tuple
     # Rebuild a separate dataset for val to apply eval transforms later
     return train_subset, Subset(full_ds, val_idx)
 
+def _resolve_mapping_path(inputs: TrainRunnerInputs) -> Path:
+    """
+    Resolve the index_remap path used for strict class verification.
+
+    Priority:
+      1) inputs.index_remap (explicit path)
+      2) args_dict['data']['mapping_pointer'] (directory or file)
+         - If directory → append 'latest.json'
+      3) default_index_remap_path()  (outputs/mappings/latest.json)
+    """
+    # 1) explicit
+    if inputs.index_remap is not None:
+        return Path(inputs.index_remap)
+
+    # 2) from config pointer (dir or file)
+    data_cfg = inputs.args_dict.get("data", {}) if isinstance(inputs.args_dict, dict) else {}
+    mp = data_cfg.get("mapping_pointer")
+    if mp:
+        p = Path(mp)
+        if p.is_dir():
+            candidate = p / "latest.json"
+        else:
+            candidate = p
+        return candidate
+
+    # 3) default
+    return default_index_remap_path()
+
 
 def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     """
@@ -150,15 +186,17 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
 
     Returns
     -------
-    (best_f1, best_epoch, checkpoint_path, class_names, class_to_idx, per_class_counts)
+    (best_f1, best_epoch, checkpoint_path)
     """
     log.info("train.start", extra={"run_id": inputs.run_id, "args": inputs.args_dict})
 
-    # Device
-    device = get_device(prefer_cuda=True)
+    # ---- Device (honor env.prefer_cuda if present)
+    env_cfg = inputs.args_dict.get("env", {}) if isinstance(inputs.args_dict, dict) else {}
+    prefer_cuda = bool(env_cfg.get("prefer_cuda", True))
+    device = get_device(prefer_cuda=prefer_cuda)
 
-    # Transforms
-    aug_cfg = inputs.args_dict.get("aug", {})  # dict from config
+    # ---- Transforms (augment config already provided via args_dict['aug'])
+    aug_cfg = inputs.args_dict.get("aug", {}) if isinstance(inputs.args_dict, dict) else {}
     tfs = build_transforms(
         inputs.image_size,
         rotate_deg=aug_cfg.get("rotate_deg", 15),
@@ -167,16 +205,16 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         jitter_contrast=aug_cfg.get("jitter_contrast", 0.1),
     )
 
-    # Mapping (strict for training)
-    mapping_path = inputs.index_remap or default_index_remap_path()
+    # ---- Mapping (strict for training) with pointer resolution
+    mapping_path = _resolve_mapping_path(inputs)
     idx_to_class = read_index_remap(mapping_path)
     expected_classes = expected_classes_from_remap(idx_to_class)
 
-    # Load full training set (train transforms for label reading)
+    # ---- Dataset & class verification
     full_train = ImageFolder(inputs.train_in, transform=tfs["train"])
     verify_dataset_classes(full_train.classes, expected_classes, strict=True)
 
-    # Per-class counts
+    # Per-class counts (for summary manifest)
     per_class_counts: Dict[str, int] = {cls: 0 for cls in expected_classes}
     for _, y in full_train.samples:
         per_class_counts[expected_classes[y]] += 1
@@ -185,36 +223,65 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         log.error("class.empty_detected", extra={"empty_classes": empties, "counts": per_class_counts})
         raise RuntimeError(f"Empty classes found in training data: {empties}")
 
-    # Stratified split and rewrap val with eval transforms
+    # ---- Stratified split; rewrap val with eval transforms
     train_subset, val_subset_idx = _stratified_split(full_train, inputs.val_frac, inputs.seed)
     val_full = ImageFolder(inputs.train_in, transform=tfs["val"])
-    val_subset = Subset(val_full, val_subset_idx.indices)  # reuse same indices
+    val_subset = Subset(val_full, val_subset_idx.indices)
 
-    # Loaders
+    # ---- Loaders (deterministic)
     train_loader = make_loader(train_subset, inputs.batch_size, shuffle=True,  num_workers=inputs.num_workers, seed=inputs.seed)
     val_loader   = make_loader(val_subset,   inputs.batch_size, shuffle=False, num_workers=inputs.num_workers, seed=inputs.seed)
 
-    # Model
+    # ---- Model
     num_classes = len(expected_classes)
     model = build_model(inputs.model_name, num_classes=num_classes, pretrained=inputs.pretrained).to(device)
 
-    # Optim/criterion/scheduler
+    # ---- Optimizer / Scheduler / AMP
     criterion = nn.CrossEntropyLoss()
+
+    # NOTE: keep your AdamW defaults; we also allow 'class_weights' later if you want
     optimizer = optim.AdamW(
         (p for p in model.parameters() if p.requires_grad),
         lr=inputs.lr,
         weight_decay=inputs.weight_decay,
     )
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=inputs.step_size, gamma=inputs.gamma)
+
+    # NEW: accept `sched` block from config when present; fallback to StepLR with inputs.step_size/gamma
+    sched_cfg = inputs.args_dict.get("sched", {}) if isinstance(inputs.args_dict, dict) else {}
+    sched_name = (sched_cfg.get("name") or "").lower()
+    sched_params = sched_cfg.get("params", {}) if isinstance(sched_cfg, dict) else {}
+
+    if sched_name == "steplr":
+        step_size = int(sched_params.get("step_size", inputs.step_size))
+        gamma = float(sched_params.get("gamma", inputs.gamma))
+        scheduler = lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+        log.info("scheduler.selected", extra={"name": "StepLR", "step_size": step_size, "gamma": gamma})
+    else:
+        # fallback (your previous default)
+        scheduler = lr_scheduler.StepLR(optimizer, step_size=inputs.step_size, gamma=inputs.gamma)
+        log.info("scheduler.selected", extra={"name": "StepLR", "step_size": inputs.step_size, "gamma": inputs.gamma})
+
     scaler = torch.cuda.amp.GradScaler(enabled=inputs.amp and torch.cuda.is_available())
 
-    # Train loop (best by macro-F1)
+    # ---- Callbacks (consume callbacks.* from config)
+    cb_cfg = inputs.args_dict.get("callbacks", {}) if isinstance(inputs.args_dict, dict) else {}
+    es = EarlyStoppingCallback(_ESCfg(**(cb_cfg.get("early_stopping", {}) or {})))
+    ckpt_cb = CheckpointCallback(_CkptCfg(**(cb_cfg.get("checkpoint", {}) or {})), out_models=inputs.out_models)
+    lr_cb = LRLoggerCallback(_LRCfg(**(cb_cfg.get("lr_logger", {}) or {})), out_summary=inputs.out_summary, run_id=inputs.run_id)
+    callbacks = [es, ckpt_cb, lr_cb]
+    for cb in callbacks:
+        cb.on_train_start(model=model, optimizer=optimizer, scheduler=scheduler)
+
+    # ---- Train loop (track best by macro-F1)
     best_wts = copy.deepcopy(model.state_dict())
     best_f1 = -math.inf
     best_epoch = -1
 
     for epoch in range(1, inputs.epochs + 1):
         t0 = time.time()
+        for cb in callbacks:
+            cb.on_epoch_start(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler)
+
         model.train()
         running_loss = 0.0
 
@@ -234,41 +301,56 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
 
         val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, device)
 
+        metrics = {
+            "train_loss": float(train_loss),
+            "val_acc": float(val_acc),
+            "val_prec": float(val_prec),
+            "val_rec": float(val_rec),
+            "val_f1": float(val_f1),
+        }
+
+        # In-memory best tracking for summary and final state
         if val_f1 > best_f1:
             best_f1 = val_f1
             best_epoch = epoch
             best_wts = copy.deepcopy(model.state_dict())
             log.info("train.best_updated", extra={"epoch": best_epoch, "best_f1": round(best_f1, 6)})
 
+        # Callbacks (checkpointing, early stopping, LR logging)
+        for cb in callbacks:
+            cb.on_epoch_end(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics)
+
         dt = time.time() - t0
         log.info("train.epoch_end", extra={
             "epoch": epoch,
             "time_sec": round(dt, 2),
-            "train_loss": round(train_loss, 6),
-            "val_acc": round(val_acc, 6),
-            "val_prec": round(val_prec, 6),
-            "val_rec": round(val_rec, 6),
-            "val_f1": round(val_f1, 6),
+            **{k: round(v, 6) for k, v in metrics.items()},
             "best_f1": round(best_f1, 6),
             "best_epoch": int(best_epoch),
         })
 
-    # Save best
-    inputs.out_models.mkdir(parents=True, exist_ok=True)
-    ckpt_path = inputs.out_models / f"best_valF1_{best_f1:.4f}_epoch{best_epoch}.pth"
-    torch.save(best_wts, ckpt_path)
-    log.info("checkpoint.saved", extra={"path": str(ckpt_path)})
+        if es.should_stop:
+            break
 
-    # Finalize model state
+    # ---- Save best (prefer checkpoint callback if it ran)
+    inputs.out_models.mkdir(parents=True, exist_ok=True)
+    if ckpt_cb.best_path is not None:
+        ckpt_path = ckpt_cb.best_path
+    else:
+        ckpt_path = inputs.out_models / f"best_valF1_{best_f1:.4f}_epoch{best_epoch}.pth"
+        torch.save(best_wts, ckpt_path)
+        log.info("checkpoint.saved", extra={"path": str(ckpt_path)})
+
+    # Finalize best state in memory
     model.load_state_dict(best_wts)
 
-    # Copy mapping next to checkpoint for airtight traceability
+    # Copy mapping next to checkpoint (traceability)
     try:
         copy_index_remap(mapping_path, ckpt_path.parent)
     except Exception as e:
         log.warning("mapping.copy_failed", extra={"error": str(e)})
 
-    # Summary manifest
+    # Write training summary manifest (unchanged)
     write_training_summary(
         out_dir=inputs.out_summary,
         run_id=inputs.run_id,
@@ -282,4 +364,9 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         env_info=get_env_info().to_dict(),
     )
 
+    # Close callbacks
+    for cb in callbacks:
+        cb.on_train_end(model=model, optimizer=optimizer, scheduler=scheduler)
+
     return best_f1, best_epoch, ckpt_path
+
