@@ -1,5 +1,5 @@
+mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
 in_dir: data/training_resized
-index_remap: outputs/mappings/latest.json
 size: 224
 exts: all
 dup_check: true

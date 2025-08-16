@@ -40,9 +40,12 @@ import os as _os
 from src.utils.logging_utils import get_logger, configure_logging
 from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
 from src.utils.paths import OUTPUTS_DIR
+
 from src.core.env import bootstrap_env, log_env_once
-from src.evaluate.runner import EvalRunnerInputs, run as run_evaluation
 from src.core.config import build_eval_config, to_dict
+from src.core.artifacts import read_mapping_pointer
+
+from src.evaluate.runner import EvalRunnerInputs, run as run_evaluation
 
 log = get_logger(__name__)
 
@@ -93,6 +96,8 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable Grad-CAM visualizations for top correct/mistaken predictions",
     )
+    parser.add_argument("--mapping-pointer", type=Path, default=None,
+                    help="Mapping pointer dir or file (preferred). Overrides --mapping-path/config.data.mapping_path.")
     add_common_eval_args(parser)     # --eval-in, --eval-out, --trained-model
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
@@ -125,6 +130,26 @@ def main(argv=None):
 
     cfg = build_eval_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
+    mapping_path = cfg.data.mapping_path or args.mapping_path
+
+    if mapping_pointer:
+        try:
+            mp = read_mapping_pointer(mapping_pointer)
+            mapping_path = Path(mp["path"])
+            log.info("evaluate.mapping_pointer_used", extra={
+                "pointer": str(mapping_pointer),
+                "index_remap": str(mapping_path),
+                "num_classes": mp.get("num_classes"),
+            })
+        except Exception as e:
+            log.error("evaluate.mapping_pointer_error", extra={"pointer": str(mapping_pointer), "error": str(e)})
+            return 2
+
+    if not mapping_path:
+        log.error("evaluate.mapping_missing", extra={"hint": "Provide data.mapping_pointer or data.mapping_path"})
+        return 2
 
     inputs = EvalRunnerInputs(
         image_size=cfg.data.image_size,

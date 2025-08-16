@@ -57,6 +57,7 @@ class ValidateConfig:
     warn_low_std: float = 3.0
     min_file_bytes: int = 1024
     fail_on: str = "error"
+    mapping_pointer: Optional[Path] = None 
     write_report: bool = True
 
 
@@ -148,6 +149,7 @@ class DataConfig:
     train_in: Optional[Path] = None   # training root (class folders)
     eval_in: Optional[Path] = None    # test root (class folders)
     mapping_path: Optional[Path] = None
+    mapping_pointer: Optional[Path] = None
     batch_size: int = 32
     num_workers: int = 4
     val_frac: float = 0.2
@@ -554,6 +556,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         warn_low_std=float(base.get("warn_low_std", 3.0)),
         min_file_bytes=int(base.get("min_file_bytes", 1024)),
         fail_on=str(base.get("fail_on", "error")),
+        mapping_pointer=_p(base.get("mapping_pointer")),
         write_report=bool(base.get("write_report", True)),
     )
 

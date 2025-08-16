@@ -1,13 +1,12 @@
 # configs/train.yaml
 run_id: brain-tumor-exp01
 data:
+  train_in: data/training_resized
+  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
   image_size: 224
-  train_in: data/training
-  mapping_path: outputs/mappings/index_remap.json
   batch_size: 32
   num_workers: 4
   val_frac: 0.2
-  seed: 42
   # class_weights: auto   # or [1.0, 0.8, 1.2, ...]
 aug:
   rotate_deg: 15

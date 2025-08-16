@@ -55,6 +55,7 @@ from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 
 from src.core.mapping import read_index_remap, expected_classes_from_remap
 from src.core.config import build_validate_config, to_dict
+from src.core.artifacts import read_mapping_pointer
 
 VALIDATION_REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
 
@@ -321,6 +322,9 @@ def main(argv=None) -> int:
     parser.add_argument("--override", action="append", default=[],
                         help="Override config values as key=val (e.g., size=256 exts=all fail_on=warning). "
                             "Repeat for multiple overrides.")
+    parser.add_argument("--mapping-pointer", type=Path, default=None,
+                    help="Mapping pointer dir or file (preferred). If provided, overrides --index-remap.")
+
     # default ON
     parser.set_defaults(write_report=True)
 
@@ -340,6 +344,7 @@ def main(argv=None) -> int:
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     in_dir = cfg.in_dir or args.in_dir
+    mapping_pointer = cfg.mapping_pointer or args.mapping_pointer
     index_remap = cfg.index_remap or args.index_remap
     size = cfg.size if cfg.size is not None else args.size
     dup_check = cfg.dup_check if cfg.dup_check is not None else args.dup_check
@@ -350,6 +355,19 @@ def main(argv=None) -> int:
 
     # exts: allow list or 'all' from config; otherwise CLI string
     exts_source = cfg.exts if cfg.exts is not None else args.exts
+
+    if mapping_pointer:
+        try:
+            mp = read_mapping_pointer(mapping_pointer)
+            index_remap = Path(mp["path"])
+            log.info("validate.mapping_pointer_used", extra={
+                "pointer": str(mapping_pointer),
+                "index_remap": str(index_remap),
+                "num_classes": mp.get("num_classes"),
+            })
+        except Exception as e:
+            log.error("validate.mapping_pointer_error", extra={"pointer": str(mapping_pointer), "error": str(e)})
+            return 2
 
     # Guardrails
     if not Path(in_dir).exists():

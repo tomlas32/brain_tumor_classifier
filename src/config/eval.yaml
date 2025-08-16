@@ -1,12 +1,11 @@
 # configs/eval.yaml
 run_id: brain-tumor-exp01-eval
 data:
+  eval_in: data/testing_resized
+  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
   image_size: 224
-  eval_in: data/test
-  mapping_path: outputs/mappings/index_remap.json
   batch_size: 32
   num_workers: 4
-  seed: 42
 model:
   name: resnet18
   weights_path: models/best.pth

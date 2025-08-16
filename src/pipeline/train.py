@@ -42,7 +42,9 @@ import argparse, os
 from datetime import datetime, timezone
 
 from src.utils.logging_utils import configure_logging, get_logger
+
 from src.core.config import build_train_config, to_dict
+from src.core.artifacts import read_mapping_pointer
 from src.core.env import (
     bootstrap_env, 
     log_env_once
@@ -80,6 +82,9 @@ def make_parser_train() -> argparse.ArgumentParser:
     add_common_train_args(parser)     # epochs, lr, weight_decay, scheduler, amp, etc.
     add_model_args(parser)            # model name + pretrained flag
     add_common_logging_args(parser)   # log level/file
+    parser.add_argument("--mapping-pointer", type=Path, default=None,
+                    help="Mapping pointer dir or file (preferred). Overrides --index-remap/config.data.mapping_path.")
+
     parser.add_argument("--config", type=Path, default=None,
                     help="Optional YAML config file for training.")
     parser.add_argument("--override", action="append", default=[],
@@ -112,6 +117,26 @@ def main(argv=None) -> int:
     # ---- Build config ----
     cfg = build_train_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
+    mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
+
+    if mapping_pointer:
+        try:
+            mp = read_mapping_pointer(mapping_pointer)
+            mapping_path = Path(mp["path"])
+            log.info("train.mapping_pointer_used", extra={
+                "pointer": str(mapping_pointer),
+                "index_remap": str(mapping_path),
+                "num_classes": mp.get("num_classes"),
+            })
+        except Exception as e:
+            log.error("train.mapping_pointer_error", extra={"pointer": str(mapping_pointer), "error": str(e)})
+            return 2
+
+    if not mapping_path:
+        log.error("train.mapping_missing", extra={"hint": "Provide data.mapping_pointer or data.mapping_path"})
+        return 2
 
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
