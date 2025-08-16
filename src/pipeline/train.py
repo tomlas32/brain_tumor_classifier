@@ -1,37 +1,48 @@
 """
-Train a CNN on resized MRI images (brain tumor classifier).
+Train entrypoint (thin script).
 
-This script:
-1) Loads a resized, class-structured training dataset (from `resize.py`).
-2) Verifies class mapping against `index_remap.json` written by `split.py`.
-3) Creates a stratified train/val split with deterministic seeding.
-4) Trains a ResNet (18/34/50) with AMP, StepLR, and AdamW.
-5) Saves only the single best checkpoint (by validation F1) and a summary JSON.
+Responsibilities
+----------------
+- Load YAML config (+ CLI overrides) into typed TrainConfig.
+- Bootstrap environment & logging (seed, device prefs).
+- Dispatch to `src.training.runner.run(inputs)`.
 
-Key design choices
-------------------
-- Strict mapping verification: training *must* match `index_remap.json`.
-- Run-aware logging: every log line includes [stage|run_id] for Docker/CI stitching.
-- Single source of truth: mapping read/verify/copy comes from `src.core.mapping`.
+Key Features
+------------
+- **Config-first** training (YAML + `--override key=val`).
+- **Callbacks**:
+  - Early stopping (`callbacks.early_stopping.*`)
+  - Checkpointing (best/last/periodic) (`callbacks.checkpoint.*`)
+  - Learning-rate logging (`callbacks.lr_logger.*`)
+- **Scheduler**:
+  - Consumes `sched.name = steplr` and `sched.params.{step_size,gamma}`.
+  - Falls back to classic `step_size`/`gamma` if `sched` not provided.
+- **Device**:
+  - Honors `env.prefer_cuda` when selecting device.
+- **Mapping pointer**:
+  - If `data.mapping_pointer` is provided (file or directory), runner resolves it
+    (directory → appends `latest.json`) for strict class verification.
 
-Typical pipeline order
-----------------------
-fetch → split → resize → validate → **train** → evaluate
+Logging
+-------
+- Uses structured logging via `logging_utils.configure_logging`.
+- Emits concise stage keys: `train.start`, `train.epoch_end`, `train.best_updated`,
+  `checkpoint.saved`, `callback.early_stop`, `scheduler.selected`, `lr_logger.written`.
 
-Examples
---------
-# minimal (defaults)
-python -m src.pipeline.train
+Artifacts
+---------
+- Best checkpoint in `io.out_models/`.
+- `index_remap.json` copied next to checkpoint (traceability).
+- Training summary JSON in `io.out_summary/`.
+- LR history JSON in `io.out_summary/`.
 
-# custom epochs / lr and output dirs
-python -m src.pipeline.train --epochs 20 --lr 3e-4 --out-models models/brain_tumor
-
-# explicit resized roots
-python -m src.pipeline.train --train-in data/training_resized
-
-# explicit mapping file (otherwise uses outputs/mappings/latest.json)
-python -m src.pipeline.train --index-remap outputs/mappings/latest.json
+Usage
+-----
+    python -m src.cli train --config configs/train.yaml \
+        -o callbacks.early_stopping.enabled=true \
+        -o callbacks.checkpoint.save_last=true
 """
+
 
 
 
