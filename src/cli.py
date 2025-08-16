@@ -1,20 +1,35 @@
+"""
+Typer-based CLI façade for the pipeline.
+
+Each command:
+- Collects arguments (CLI flags, --config YAML, --override key=val).
+- Dispatches into the corresponding stage module via its main(argv).
+- Ensures structured logging with a dispatch entry (stage + argv).
+"""
+
+
 import typer
 from typing import Optional
 from pathlib import Path
+
 from src.pipeline import fetch as fetch_mod
 from src.pipeline import split as split_mod
 from src.pipeline import resize as resize_mod
 from src.pipeline import validate as validate_mod
 from src.pipeline import train as train_mod
-from src.pipeline.evaluate import evaluate as evaluate_mod
+from src.pipeline import evaluate as evaluate_mod
+
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.parser_utils import DEFAULT_EXTS
+from src.utils.logging_utils import get_logger
 
 
 DEFAULT_INDEX_REMAP = OUTPUTS_DIR / "mappings" / "latest.json"
 
 app = typer.Typer()
+
+log = get_logger(__name__)
 
 @app.command()
 def fetch(
@@ -24,6 +39,9 @@ def fetch(
     pointer_dir: Optional[Path] = None,
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: list[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). Repeatable."),
 ):
     
     """
@@ -74,6 +92,12 @@ def fetch(
         argv += ["--pointer-dir", str(pointer_dir)]
     if log_file:
         argv += ["--log-file", str(log_file)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
+
+    log.info("cli.dispatch", extra={"stage": "fetch", "argv": argv})
 
     code = fetch_mod.main(argv)    # calls fetch.py main(argv)
     raise typer.Exit(code)         # # propagate exit status to shell/CI
@@ -88,6 +112,9 @@ def split(
     clear_dest: bool = False,
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: list[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., test_frac=0.25 clear_dest=true). Repeatable."),
 ):
     """
     Re-split pooled images into DATA_DIR/training and DATA_DIR/testing.
@@ -110,6 +137,12 @@ def split(
         argv += ["--clear-dest"]
     if log_file:
         argv += ["--log-file", str(log_file)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
+
+    log.info("cli.dispatch", extra={"stage": "split", "argv": argv})
 
     code = split_mod.main(argv)   # calls split.py main(argv)
     raise typer.Exit(code)        # propagate exit status to shell/CI
@@ -124,7 +157,10 @@ def resize(
     test_out_dir: Path = DATA_DIR / "testing_resized",
     exts: str = DEFAULT_EXTS,
     log_level: str = "INFO",
-    log_file: Optional[str] = None
+    log_file: Optional[str] = None,
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: list[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., size=256 exts=all). Repeatable."),
 
 ):
     """
@@ -151,6 +187,12 @@ def resize(
 
     if log_file:
         argv += ["--log-file", str(log_file)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
+
+    log.info("cli.dispatch", extra={"stage": "resize", "argv": argv})
 
     code = resize_mod.main(argv)   # calls resize.py main(argv)
     raise typer.Exit(code)        # propagate exit status to shell/CI
@@ -171,6 +213,9 @@ def validate(
     min_file_bytes: int = 1024,
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: list[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., size=256 exts=all fail_on=warning). Repeatable."),
 ):
     """
     Validate the integrity and consistency of the resized dataset before training.
@@ -207,6 +252,12 @@ def validate(
         argv += ["--dup-check"]
     if log_file:
         argv += ["--log-file", str(log_file)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
+
+    log.info("cli.dispatch", extra={"stage": "validate", "argv": argv})
 
     code = validate_mod.main(argv)   # calls validate.py main(argv)
     raise typer.Exit(code)           # propagate exit status to shell/CI
@@ -311,6 +362,8 @@ def train(
     for ov in override or []:
         argv += ["--override", ov]
 
+    log.info("cli.dispatch", extra={"stage": "train", "argv": argv})
+
     code = train_mod.main(argv)   # calls src/training/train.py:main(argv)
     raise typer.Exit(code)
 
@@ -336,6 +389,9 @@ def evaluate(
         help="Override config values as key=val (e.g., io.top_per_class=10 io.make_gradcam=false). "
              "Repeat for multiple overrides."
     ),
+    top_per_class: int = typer.Option(6, help="Items per true class for galleries/Grad-CAM."),
+    no_galleries: bool = typer.Option(False, help="Disable plain image galleries."),
+    no_gradcam: bool = typer.Option(False, help="Disable Grad-CAM overlays."),
 ):
     """
     Evaluate a trained model on the resized test set.
@@ -378,7 +434,14 @@ def evaluate(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    argv += ["--top-per-class", str(top_per_class)]
+    if no_galleries:
+        argv += ["--no-galleries"]
+    if no_gradcam:
+        argv += ["--no-gradcam"]
 
+    log.info("cli.dispatch", extra={"stage": "evaluate", "argv": argv})
+    
     code = evaluate_mod.main(argv)  # calls src/pipeline/evaluate.py:main(argv)
     raise typer.Exit(code)
 
