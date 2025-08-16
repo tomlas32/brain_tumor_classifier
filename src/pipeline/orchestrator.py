@@ -49,6 +49,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.utils.logging_utils import get_logger, configure_logging
+from src.utils.paths import OUTPUTS_DIR
+
 from src.core.config import (
     MasterConfig,
     build_master_config,
@@ -65,9 +67,81 @@ from src.pipeline import validate as validate_mod
 from src.pipeline import train as train_mod
 from src.pipeline import evaluate as evaluate_mod
 
+
 log = get_logger(__name__)
 
 DEFAULT_ORDER = ["fetch", "split", "resize", "validate", "train", "evaluate"]
+
+VALID_STAGES = set(DEFAULT_ORDER)
+
+def _validate_stage_names(skip: List[str], resume_from: Optional[str]) -> Optional[str]:
+    """
+    Return an error message if invalid stage names are supplied; otherwise None.
+    """
+    bad = [s for s in (skip or []) if s not in VALID_STAGES]
+    if bad:
+        return f"Invalid --skip stages: {bad}. Valid: {sorted(VALID_STAGES)}"
+    if resume_from and resume_from not in VALID_STAGES:
+        return f"Invalid --resume-from: '{resume_from}'. Valid: {sorted(VALID_STAGES)}"
+    return None
+
+
+def _dataset_owner_slug(dataset: Optional[str]) -> tuple[str, str]:
+    """
+    Split 'owner/slug' → (owner, slug). Returns ('_unknown_', '_unknown_') if not parseable.
+    """
+    if not dataset or "/" not in dataset:
+        return "_unknown_", "_unknown_"
+    owner, slug = dataset.split("/", 1)
+    return owner or "_unknown_", slug or "_unknown_"
+
+
+def _expected_pointer_paths(master: MasterConfig) -> Dict[str, Dict[str, str]]:
+    """
+    Derive expected pointer directories and latest.json paths for this run.
+
+    Rules
+    -----
+    - Fetch:
+        If fetch.pointer_dir provided → use that dir.
+        Else, derive from fetch.dataset → outputs/pointers/fetch/<owner>/<slug>/
+    - Mapping:
+        Prefer an explicit mapping pointer from any stage (train/eval/validate), in this order:
+          train.data.mapping_pointer → eval.data.mapping_pointer → validate.mapping_pointer
+        Else, derive from fetch.dataset → outputs/pointers/mapping/<owner>/<slug>/
+
+    Returns
+    -------
+    {
+      "fetch":   {"dir": ".../pointers/fetch/<o>/<s>/",   "latest": ".../latest.json"},
+      "mapping": {"dir": ".../pointers/mapping/<o>/<s>/", "latest": ".../latest.json"},
+    }
+    """
+    # --- Fetch pointer
+    if getattr(master.fetch, "pointer_dir", None):
+        fetch_dir = Path(master.fetch.pointer_dir)
+    else:
+        o, s = _dataset_owner_slug(getattr(master.fetch, "dataset", None))
+        fetch_dir = OUTPUTS_DIR / "pointers" / "fetch" / o / s
+    fetch_latest = fetch_dir / "latest.json"
+
+    # --- Mapping pointer (prefer explicit pointers if any)
+    mp = (
+        getattr(getattr(master.train, "data", None), "mapping_pointer", None)
+        or getattr(getattr(master.evaluate, "data", None), "mapping_pointer", None)
+        or getattr(master.validate, "mapping_pointer", None)
+    )
+    if mp:
+        mapping_dir = Path(mp) if Path(mp).is_dir() else Path(mp).parent
+    else:
+        o, s = _dataset_owner_slug(getattr(master.fetch, "dataset", None))
+        mapping_dir = OUTPUTS_DIR / "pointers" / "mapping" / o / s
+    mapping_latest = mapping_dir / "latest.json"
+
+    return {
+        "fetch": {"dir": str(fetch_dir), "latest": str(fetch_latest)},
+        "mapping": {"dir": str(mapping_dir), "latest": str(mapping_latest)},
+    }
 
 
 def _utc_ts_compact() -> str:
@@ -248,17 +322,50 @@ def run_pipeline(
     })
     log.info("config.resolved", extra={"config": to_dict(master)})
 
+    # Validate skip/resume names up-front
+    _err = _validate_stage_names(skip or [], resume_from)
+    if _err:
+        log.error("orchestrator.args_invalid", extra={"error": _err})
+        return 2
+
+    # Resolve expected pointer locations and log once
+    pointers = _expected_pointer_paths(master)
+    log.info("orchestrator.pointers_resolved", extra=pointers)
+
     # Phase 0 (once)
     bootstrap_env(seed=master.env.seed)
     log_env_once()
     os.environ["RUN_ID"] = run_id
 
-    # Build plan
+    # Build plan + ensure run dir
+    run_dir = _mk_run_dir(run_id)
     plan = _build_plan(master, dry_run=dry_run, skip=skip or [], resume_from=resume_from)
 
+    # Dump the plan to a file for auditability
+    plan_payload = {
+        "run_id": run_id,
+        "dry_run": bool(dry_run),
+        "skip": skip or [],
+        "resume_from": resume_from,
+        "stages": [
+            {"stage": it["stage"], "config": str(it["config_path"]), "argv": it["argv"]}
+            for it in plan
+        ],
+        "pointers": pointers,
+    }
+    plan_path = run_dir / "plan.json"
+    safe_json_dump(plan_payload, plan_path)
+    log.info("orchestrator.plan_written", extra={"path": str(plan_path)})
+
     if dry_run:
-        log.info("orchestrator.done", extra={"run_id": run_id, "overall_exit_code": 0, "note": "dry_run"})
+        log.info("orchestrator.done", extra={
+            "run_id": run_id,
+            "overall_exit_code": 0,
+            "note": "dry_run",
+            "plan": str(plan_path),
+        })
         return 0
+
 
     # Execute stages
     results: List[Dict] = []
@@ -299,8 +406,9 @@ def run_pipeline(
         "stages_planned": [p["stage"] for p in plan],
         "stages_run": results,
         "overall_exit_code": overall_code,
+        "pointers": pointers, 
     }
-    manifest_path = _mk_run_dir(run_id) / "run_manifest.json"
+    manifest_path = run_dir / "run_manifest.json"
     safe_json_dump(manifest, manifest_path)
 
     log.info("orchestrator.done", extra={"run_id": run_id, "overall_exit_code": overall_code, "manifest": str(manifest_path)})
