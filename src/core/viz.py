@@ -1,234 +1,277 @@
+# src/core/viz.py
 """
-Visualization helpers: galleries and Grad-CAM overlays.
+Visualization utilities for evaluation artifacts.
 
-This module centralizes non-essential (but highly useful) visual outputs used
-during model evaluation so they can be re-used and tested independently.
+Provides:
+- show_calls_gallery: Render a tiled gallery of predictions (e.g., misclassifications / top-correct).
+- show_gradcam_gallery: Render Grad-CAM overlays for selected predictions.
 
-Contents
---------
-- show_calls_gallery: render a tiled gallery of images (e.g., top-correct /
-  misclassifications) with compact titles.
-- show_gradcam_gallery: render Grad-CAM overlays for a selection of images.
-- _pick_last_conv_layer: heuristic to choose a last conv layer for Grad-CAM.
+Both functions emit structured logs and save PNG artifacts to the given directory.
 
-Dependencies
-------------
-- matplotlib
-- pillow
-- pytorch_grad_cam (for Grad-CAM only)
-
-Logging
--------
-- 'gallery.saved' with {'path', 'n_items'}
-- 'gradcam.saved' with {'path', 'n_items'}
-- Warnings on I/O or CAM failures.
-
-Usage
------
-from src.core.viz import show_calls_gallery, show_gradcam_gallery
-
-show_calls_gallery(items, class_names, cols=6, title="misclassifications", save_dir=Path(...))
-show_gradcam_gallery(items, class_names, model, device, ds_for_transform, cols=4,
-                     title="misclass_gradcam", target_layer=None, save_dir=Path(...))
+Author: Tomasz Lasota
+Date: 2025-08-16
+Version: 1.1
 """
-
 
 from __future__ import annotations
-
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
+import io
+import math
 import numpy as np
+from PIL import Image
+
+import matplotlib
+matplotlib.use("Agg")  # headless-safe
 import matplotlib.pyplot as plt
-from PIL import Image, ImageOps
+
+import torch
+from torchvision import transforms as T
 
 from src.utils.logging_utils import get_logger
 
 log = get_logger(__name__)
 
-# ----- Small utilities --------------------------------------------------------
+# Try to import Grad-CAM backend (optional dependency)
+try:
+    from pytorch_grad_cam import GradCAM
+    from pytorch_grad_cam.utils.image import show_cam_on_image
+    _HAS_CAM = True
+except Exception:
+    _HAS_CAM = False
 
-def _slugify(text: str) -> str:
-    """Lowercase and replace non-alphanumeric with dashes."""
-    return "".join(c.lower() if c.isalnum() else "-" for c in text).strip("-")
+
+# --------------------------- Helpers -----------------------------------------
 
 
-# ----- Galleries (plain images) -----------------------------------------------
+def _ensure_dir(d: Path) -> None:
+    d.mkdir(parents=True, exist_ok=True)
+
+
+def _open_rgb(path: str) -> Optional[Image.Image]:
+    try:
+        img = Image.open(path).convert("RGB")
+        return img
+    except Exception as e:
+        log.warning("viz.image_read_error", extra={"path": path, "error": str(e)})
+        return None
+
+
+def _pil_to_numpy_float01(img: Image.Image) -> np.ndarray:
+    arr = np.asarray(img).astype("float32") / 255.0
+    return arr
+
+
+def _make_title(item: Dict, class_names: List[str]) -> str:
+    """Compose a concise tile title from a prediction record."""
+    t = item.get("true"); p = item.get("pred"); c = item.get("conf")
+    t_name = class_names[t] if isinstance(t, int) and 0 <= t < len(class_names) else str(t)
+    p_name = class_names[p] if isinstance(p, int) and 0 <= p < len(class_names) else str(p)
+    if c is None:
+        return f"T:{t_name}  P:{p_name}"
+    return f"T:{t_name}  P:{p_name}  conf:{c:.2f}"
+
+
+def _default_transform_for_display(image_size: int = 224) -> T.Compose:
+    """Fallback minimal eval transform for display (resize+center-crop → tensor in [0,1])."""
+    return T.Compose([
+        T.Resize(image_size, interpolation=T.InterpolationMode.BILINEAR),
+        T.CenterCrop(image_size),
+        T.ToTensor(),  # [0,1]
+    ])
+
+
+def _select_target_layer(model) -> torch.nn.Module:
+    """
+    Heuristic to pick a good last conv layer for ResNet-style models.
+    If unavailable, returns None and Grad-CAM will skip.
+    """
+    # Common for torchvision ResNets: model.layer4[-1]
+    try:
+        layer4 = getattr(model, "layer4", None)
+        if layer4 and hasattr(layer4, "__getitem__"):
+            return layer4[-1]
+        return None
+    except Exception:
+        return None
+
+
+# --------------------------- Public API --------------------------------------
+
 
 def show_calls_gallery(
-    predictions: List[dict],
+    items: List[Dict],
     class_names: List[str],
-    cols: int,
-    title: str,
-    save_dir: str | Path | None,
-) -> None:
+    *,
+    cols: int = 6,
+    title: str = "gallery",
+    save_dir: Path,
+    image_size: int = 224,
+) -> Optional[Path]:
     """
-    Render a tiled gallery for a list of prediction dicts.
+    Render a grid of images from `items` (each item has 'path', 'true', 'pred', 'conf').
 
     Parameters
     ----------
-    predictions : list[dict]
-        Each dict must contain: {'true': int, 'pred': int, 'conf': float, 'path': str}
+    items : list of dict
+        Each dict should include: {'path': str, 'true': int, 'pred': int, 'conf': float}
     class_names : list[str]
-        Ordered class names used for labels in titles.
+        Class names indexed by label id.
     cols : int
         Number of columns in the grid.
     title : str
-        Figure title and output filename prefix.
-    save_dir : str | Path | None
-        Directory to save the PNG; if None, only renders (still closed).
-
-    Produces
-    --------
-    <save_dir>/<slug(title)>.png
-    """
-    n = len(predictions)
-    rows = max(1, int(np.ceil(n / cols)))
-    plt.figure(figsize=(3.0 * cols, 3.3 * rows))
-
-    for i, item in enumerate(predictions, start=1):
-        ax = plt.subplot(rows, cols, i)
-        try:
-            img = ImageOps.exif_transpose(Image.open(item["path"])).convert("L")
-            ax.imshow(img, cmap="gray", vmin=0, vmax=255)
-            ax.set_title(
-                f"{class_names[item['true']]} → {class_names[item['pred']]}\nconf={item['conf']:.2f}",
-                fontsize=9
-            )
-            ax.axis("off")
-        except Exception as e:
-            ax.axis("off")
-            ax.set_title("I/O error", fontsize=9)
-            log.warning("gallery.io_error", extra={"path": item.get("path"), "error": str(e)})
-
-    plt.tight_layout()
-
-    if save_dir is not None:
-        save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
-        out_path = save_dir / f"{_slugify(title)}.png"
-        try:
-            plt.savefig(out_path, dpi=180, bbox_inches="tight")
-            log.info("gallery.saved", extra={"path": str(out_path), "n_items": n})
-        except Exception as e:
-            log.warning("gallery.save_failed", extra={"path": str(out_path), "error": str(e)})
-    plt.close()
-
-
-# ----- Grad-CAM ---------------------------------------------------------------
-
-def _pick_last_conv_layer(model):
-    """
-    Heuristic to select a convolutional layer for Grad-CAM in ResNet-like models.
+        Basename for the saved figure (PNG); also drawn atop the figure.
+    save_dir : Path
+        Directory to save the figure.
+    image_size : int
+        Optional resize for uniform preview.
 
     Returns
     -------
-    torch.nn.Module
-        The last encountered nn.Conv2d module.
-
-    Raises
-    ------
-    RuntimeError if none is found.
+    saved_path : Path | None
+        Path to the saved PNG, or None if nothing was rendered.
     """
-    import torch.nn as nn
-    for name, module in reversed(list(model.named_modules())):
-        if isinstance(module, nn.Conv2d):
-            return module
-    raise RuntimeError("Could not find a convolutional layer for Grad-CAM.")
+    if not items:
+        log.info("viz.warning.empty_gallery", extra={"title": title})
+        return None
+
+    _ensure_dir(save_dir)
+    rows = math.ceil(len(items) / cols)
+    fig = plt.figure(figsize=(cols * 2.5, rows * 2.5))
+    fig.suptitle(title, fontsize=14, y=0.98)
+
+    for i, item in enumerate(items):
+        ax = fig.add_subplot(rows, cols, i + 1)
+        img = _open_rgb(item.get("path"))
+        if img is None:
+            ax.axis("off")
+            continue
+        if image_size:
+            img = img.resize((image_size, image_size), Image.BILINEAR)
+        ax.imshow(img)
+        ax.set_title(_make_title(item, class_names), fontsize=9)
+        ax.axis("off")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path = save_dir / f"{title}.png"
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+    log.info("gallery.saved", extra={"path": str(out_path), "count": len(items), "title": title})
+    return out_path
 
 
 def show_gradcam_gallery(
-    predictions: List[dict],
+    predictions: List[Dict],
     class_names: List[str],
-    model,
-    device,
-    ds_for_transform,  # e.g., an ImageFolder with the desired .transform
-    cols: int,
-    title: str,
-    target_layer=None,
-    save_dir: Optional[Path] = None,
-) -> None:
+    *,
+    model: torch.nn.Module,
+    device: torch.device,
+    ds_for_transform,  # e.g., an ImageFolder from which to steal the eval transform
+    cols: int = 4,
+    title: str = "gradcam",
+    target_layer: Optional[torch.nn.Module] = None,
+    save_dir: Path = Path("."),
+    image_size: int = 224,
+) -> Optional[Path]:
     """
-    Render Grad-CAM overlays for selected predictions.
+    Render Grad-CAM overlays as a grid for selected predictions.
 
     Parameters
     ----------
-    predictions : list[dict]
-        Each dict: {'true': int, 'pred': int, 'conf': float, 'path': str}
+    predictions : list of dict
+        Each dict should include: {'path': str, 'true': int, 'pred': int, 'conf': float}
     class_names : list[str]
-        Ordered class names for captioning.
-    model : torch.nn.Module
-        Model (should already be on device and set to eval by caller).
+        Class names indexed by label id.
+    model : nn.Module
+        Trained classification model.
     device : torch.device
-        CUDA or CPU device.
-    ds_for_transform :
-        Dataset providing the `.transform` used for evaluation (ensures
-        the same normalization and resizing as evaluation).
+        Inference device.
+    ds_for_transform : Dataset
+        Any dataset that defines the evaluation transform; if missing, a default
+        display transform is used internally.
     cols : int
-        Grid columns.
+        Number of columns in the grid.
     title : str
-        Title and filename stem.
-    target_layer :
-        Optional layer to target; if None, a reasonable conv layer is chosen.
-    save_dir : Path | None
-        Directory to write the PNG.
+        Basename for the saved figure (PNG); also drawn atop the figure.
+    target_layer : nn.Module | None
+        Specific conv layer for CAM; if None, will try to auto-select.
+    save_dir : Path
+        Directory to save the figure.
+    image_size : int
+        Preprocess/preview size.
 
-    Produces
-    --------
-    <save_dir>/<slug(title)>.png
-
-    Notes
-    -----
-    - Requires `pytorch_grad_cam` package.
-    - Uses predicted class (item['pred']) as the target for the CAM.
+    Returns
+    -------
+    saved_path : Path | None
+        Path to the saved PNG, or None if no backend is available or inputs empty.
     """
-    from pytorch_grad_cam import GradCAM
-    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-    from pytorch_grad_cam.utils.image import show_cam_on_image
+    if not predictions:
+        log.info("viz.warning.empty_gallery", extra={"title": title})
+        return None
 
-    target_layer = target_layer or _pick_last_conv_layer(model)
+    if not _HAS_CAM:
+        log.warning("viz.warning.no_gradcam_backend", extra={"title": title, "hint": "pip install pytorch-grad-cam"})
+        return None
 
-    n = len(predictions)
-    rows = max(1, int(np.ceil(n / cols)))
-    plt.figure(figsize=(3.5 * cols, 3.8 * rows))
+    _ensure_dir(save_dir)
+    model.eval()
 
-    try:
-        cam = GradCAM(model=model, target_layers=[target_layer], use_cuda=(device.type == "cuda"))
-    except Exception as e:
-        log.warning("gradcam.init_failed", extra={"error": str(e)})
-        plt.close()
-        return
+    # Reuse eval transform if possible; otherwise fallback
+    eval_tf = getattr(ds_for_transform, "transform", None)
+    if eval_tf is None:
+        eval_tf = _default_transform_for_display(image_size)
 
-    for i, item in enumerate(predictions, start=1):
-        ax = plt.subplot(rows, cols, i)
-        try:
-            from PIL import Image
-            img = ImageOps.exif_transpose(Image.open(item["path"])).convert("RGB")
-            img_arr = np.array(img).astype(np.float32) / 255.0
+    # Pick target layer if not provided
+    tlayer = target_layer or _select_target_layer(model)
+    if tlayer is None:
+        log.warning("viz.warning.no_target_layer", extra={"title": title, "note": "Could not infer a conv layer"})
+        return None
 
-            # Reuse exact eval transform (grayscale→3ch, tensor, normalize)
-            x = ds_for_transform.transform(img).unsqueeze(0).to(device)
-            grayscale_cam = cam(input_tensor=x, targets=[ClassifierOutputTarget(item["pred"])])[0]
-            overlay = show_cam_on_image(img_arr, grayscale_cam, use_rgb=True)
+    cam = GradCAM(model=model, target_layers=[tlayer], use_cuda=(device.type == "cuda"))
 
-            ax.imshow(overlay)
-            ax.set_title(
-                f"{class_names[item['true']]} → {class_names[item['pred']]}\nconf={item['conf']:.2f}",
-                fontsize=9
-            )
+    cols = max(1, int(cols))
+    rows = math.ceil(len(predictions) / cols)
+    fig = plt.figure(figsize=(cols * 3.0, rows * 3.0))
+    fig.suptitle(title, fontsize=14, y=0.98)
+
+    rendered = 0
+    for i, item in enumerate(predictions):
+        path = item.get("path")
+        pil = _open_rgb(path)
+        ax = fig.add_subplot(rows, cols, i + 1)
+        if pil is None:
             ax.axis("off")
-        except Exception as e:
-            ax.axis("off")
-            ax.set_title("Grad-CAM error", fontsize=9)
-            log.warning("gradcam.item_failed", extra={"path": item.get("path"), "error": str(e)})
+            continue
 
-    plt.tight_layout()
+        # For CAM overlay, we need both the original RGB (float[0,1]) and the normalized tensor
+        rgb_float = _pil_to_numpy_float01(pil.resize((image_size, image_size), Image.BILINEAR))
 
-    if save_dir is not None:
-        save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
-        out_path = save_dir / f"{_slugify(title)}.png"
-        try:
-            plt.savefig(out_path, dpi=160, bbox_inches="tight")
-            log.info("gradcam.saved", extra={"path": str(out_path), "n_items": n})
-        except Exception as e:
-            log.warning("gradcam.save_failed", extra={"path": str(out_path), "error": str(e)})
-    plt.close()
+        # Run transform pipeline → 1xCxHxW tensor
+        x = eval_tf(pil).unsqueeze(0).to(device)
+        with torch.inference_mode():
+            targets = None  # default: strongest class in forward pass
+            grayscale_cam = cam(input_tensor=x, targets=targets)[0]  # HxW
+
+        # Create overlay
+        overlay = show_cam_on_image(rgb_float, grayscale_cam, use_rgb=True)  # uint8
+        overlay_img = Image.fromarray(overlay)
+
+        ax.imshow(overlay_img)
+        ax.set_title(_make_title(item, class_names), fontsize=9)
+        ax.axis("off")
+        rendered += 1
+
+    if rendered == 0:
+        plt.close(fig)
+        log.info("viz.warning.empty_gallery", extra={"title": title})
+        return None
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path = save_dir / f"{title}.png"
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+    log.info("gradcam.saved", extra={"path": str(out_path), "count": int(rendered), "title": title})
+    return out_path
