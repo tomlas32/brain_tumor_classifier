@@ -156,7 +156,7 @@ def main(argv=None) -> int:
         amp=cfg.optim.amp,
         out_models=cfg.io.out_models,
         out_summary=cfg.io.out_summary,
-        index_remap=cfg.data.mapping_path or args.index_remap,  # or extend DataConfig with it if you prefer
+        index_remap=Path(mapping_path),  
         run_id=cfg.run_id or run_id,
         args_dict=to_dict(cfg),
     )

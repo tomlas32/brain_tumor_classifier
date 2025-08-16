@@ -266,6 +266,7 @@ class LoggingConfig:
     file: Optional[str] = None
     json: bool = False
 
+@dataclass
 class MasterConfig:
     """
     End-to-end pipeline configuration.
