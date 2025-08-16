@@ -1,6 +1,7 @@
 # 🧠 Brain Tumor MRI Classification Pipeline
 
-This repository implements a **modular, config-driven ML pipeline** for early detection of brain tumors from MRI scans. The design emphasizes **reproducibility**, **artifact consistency**, and **ease of use** in both research and production settings.
+This repository implements a **modular, config-driven ML pipeline** for early detection of brain tumors from MRI scans.  
+The design emphasizes **reproducibility**, **artifact consistency**, and **extensibility** in both research and production.
 
 ---
 
@@ -8,11 +9,13 @@ This repository implements a **modular, config-driven ML pipeline** for early de
 
 - **End-to-end pipeline**: `fetch → split → resize → validate → train → evaluate`
 - **Artifact pointers**: standardized JSON pointers for fetch & mapping stages, ensuring consistent downstream consumption.
-- **Config-first runs**: each stage can be controlled via YAML configs; CLI is a thin wrapper.
-- **Reproducibility**: automatic run IDs, a persisted plan (`plan.json`), a final run manifest, and per-stage logs.
-- **Extensible core**: modularized `core/` includes transforms, metrics, mapping utilities, environment bootstrap, and artifact helpers.
-- **Structured logging**: consistent keys across stages to make tracing easy in both console and files.
-- **Optional visualization**: Grad-CAM overlays and prediction galleries during evaluation.
+- **Config-first runs**: all stages run from YAML configs; CLI is a thin wrapper.
+- **Reproducibility**: automatic run IDs, persisted `plan.json`, final run manifest, per-stage logs.
+- **Extensible core**: modularized `core/` includes transforms, metrics, mapping, env bootstrap, artifact helpers, and visualization.
+- **Structured logging**: consistent key/value logs across stages.
+- **Callbacks**: early stopping, checkpoint saving (best/last), LR logging with JSON history.
+- **Visualization**: Grad-CAM overlays and prediction galleries centralized in `core/viz.py`.
+- **CI-ready**: Pytest suite with smoke tests, conftest log suppression, and GitHub Actions workflow.
 
 ---
 
@@ -20,32 +23,50 @@ This repository implements a **modular, config-driven ML pipeline** for early de
 
 ```
 src/
-  core/               # config, transforms, metrics, mapping, env, artifacts, (viz optional)
+  core/
+    config.py         # typed dataclasses for all configs
+    transforms.py     # training/validation/test transforms
+    metrics.py        # accuracy, precision, recall, F1, confusion
+    mapping.py        # index remap utils
+    env.py            # bootstrap_env + log_env_once
+    artifacts.py      # summary writing, pointers
+    viz.py            # Grad-CAM + galleries
   pipeline/
-    orchestrator.py   # runs fetch→…→evaluate from one master config; writes plan & manifest
+    orchestrator.py   # run all stages from master config
     fetch.py
     split.py
     resize.py
     validate.py
   train/
-    runner.py         # training loop orchestration
+    runner.py         # training loop w/ callbacks
   evaluate/
-    runner.py         # evaluation orchestration
+    runner.py         # evaluation loop
   utils/
-    logging_utils.py  # structured logging
-    paths.py          # project paths and helpers
+    logging_utils.py
+    paths.py
+    configs.py
+    parser_utils.py
   cli.py              # Typer CLI: fetch/split/resize/validate/train/evaluate/pipeline
 configs/
   train.yaml
   eval.yaml
+  resize.yaml
+  split.yaml
   validate.yaml
   pipeline.yaml
+  pipeline_minimal.yaml
 outputs/
-  orchestrator/<run_id>/{plan.json, run_manifest.json, stage sub-configs}
+  orchestrator/<run_id>/{plan.json, run_manifest.json, stage-sub-configs}
   pointers/
     fetch/<owner>/<slug>/{latest.json, history/...}
     mapping/<owner>/<slug>/{latest.json, history/...}
-models/               # checkpoints (e.g., best.pth)
+models/               # checkpoints (best/last, per naming template)
+.github/workflows/
+  ci.yml              # GitHub Actions workflow (pytest, artifacts)
+tests/
+  test_pipeline_smoke.py
+  test_viz.py
+pytest.ini
 ```
 
 ---
@@ -58,7 +79,7 @@ pip install -r requirements.txt
 ```
 
 ### 2) Authentication (Kaggle)
-Create `~/.kaggle/kaggle.json` with your Kaggle API credentials and set permissions to `0600`.
+Create `~/.kaggle/kaggle.json` with your Kaggle API credentials (chmod 600).
 
 ### 3) Run the full pipeline
 ```bash
@@ -132,17 +153,19 @@ python -m src.cli pipeline --config configs/pipeline.yaml
 }
 ```
 
-Both pointers also write a timestamped copy to a `history/` subfolder for auditability. Downstream stages **prefer pointers** (dir or file) and fall back to raw paths only if needed.
+Both pointers also write a timestamped copy to a `history/` subfolder for auditability. Downstream stages **prefer pointers** and only fall back to raw paths if needed.
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing & CI
 
 Run smoke tests (includes orchestrator dry-run, mocked full run, and CLI checks):
 
 ```bash
 pytest -q
 ```
+
+Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 and 3.11, uploads logs & outputs as artifacts.
 
 ---
 
@@ -164,113 +187,23 @@ pytest -q
    ```bash
    python -m src.cli validate --config configs/validate.yaml
    ```
-5. **Train** (uses **mapping** pointer)  
+5. **Train** (uses **mapping** pointer; callbacks active if enabled in config)  
    ```bash
    python -m src.cli train --config configs/train.yaml
    ```
-6. **Evaluate** (uses **mapping** pointer; can create galleries/Grad-CAM)  
+6. **Evaluate** (uses **mapping** pointer; galleries/Grad-CAM saved via `core/viz.py`)  
    ```bash
    python -m src.cli evaluate --config configs/eval.yaml
    ```
 
 ---
 
-## 🧷 Example `configs/pipeline.yaml`
-
-```yaml
-run_id: bt-exp-001
-
-env:
-  seed: 42
-  prefer_cuda: true
-  cudnn_deterministic: true
-  cudnn_benchmark: false
-
-log:
-  level: INFO
-  file: null
-  json: false
-
-fetch:
-  dataset: sartajbhuvaji/brain-tumor-classification-mri
-  cache_dir: data
-  write_pointer: true
-
-split:
-  dataset: sartajbhuvaji/brain-tumor-classification-mri
-  test_frac: 0.25
-  clear_dest: true
-  exts: [".jpg", ".jpeg", ".png"]
-
-resize:
-  in_dir: data/combined_split_simple
-  out_dir: data/training_resized
-  size: 224
-  exts: all
-
-validate:
-  in_dir: data/training_resized
-  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
-  size: 224
-  fail_on: warning
-  warn_low_std: 3.0
-  min_file_bytes: 1024
-  dup_check: false
-
-train:
-  data:
-    image_size: 224
-    train_in: data/training_resized
-    mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
-    batch_size: 32
-    num_workers: 4
-    val_frac: 0.2
-    seed: 42
-  model:
-    name: resnet18
-    pretrained: true
-  optim:
-    lr: 0.001
-    weight_decay: 0.0001
-    step_size: 10
-    gamma: 0.1
-    amp: true
-  io:
-    out_models: models
-    out_summary: outputs/training
-  loop:
-    epochs: 20
-  aug:
-    rotate_deg: 10
-    hflip_prob: 0.5
-    jitter_brightness: 0.05
-    jitter_contrast: 0.05
-
-evaluate:
-  data:
-    image_size: 224
-    eval_in: data/testing_resized
-    mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
-    batch_size: 32
-    num_workers: 4
-    seed: 42
-  model:
-    name: resnet18
-    weights_path: models/best.pth
-  io:
-    eval_out: outputs/evaluation
-    make_galleries: true
-    make_gradcam: true
-    top_per_class: 6
-```
-
----
-
 ## 📚 Notes
 
-- Configs are typed dataclasses (see `src/core/config.py`).
-- All runs log environment info at start (`bootstrap_env`, `log_env_once`) for reproducibility.
-- Training & evaluation **prefer mapping pointers**; raw `index_remap.json` paths remain supported for back-compat.
+- Configs are typed dataclasses (`src/core/config.py`).
+- Callbacks configurable via `train.yaml` (`callbacks.early_stopping`, `callbacks.checkpoint`, `callbacks.lr_logger`).
+- Visualization centralized in `core/viz.py`.
+- Training & evaluation prefer **mapping pointers**; raw `index_remap.json` still supported.
 
 ---
 
