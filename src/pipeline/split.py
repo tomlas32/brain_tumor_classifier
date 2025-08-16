@@ -11,9 +11,20 @@ Pools images from --training-dir and --testing-dir, creates a random split with
 - Ensures at least one test image for any non-empty class.
 - Avoids filename collisions by appending a numeric suffix.
 
+Example:
+# Config-first
+python -m src.pipeline.split --config configs/split.yaml
+
+# Config + overrides
+python -m src.pipeline.split --config configs/split.yaml \
+  --override test_frac=0.2 --override clear_dest=false
+
+# Legacy (no config)
+python -m src.pipeline.split --dataset owner/name --test-frac 0.2
+
 Author: Tomasz Lasota
-Date: 2025-08-14
-Version: 1.1  
+Date: 2025-08-16
+Version: 1.2  
 """
 
 from pathlib import Path
@@ -25,7 +36,9 @@ from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
+
 from src.core.mapping import write_index_remap as mapping_write_index_remap, copy_index_remap
+from src.core.config import build_split_config, to_dict
 
 log = get_logger(__name__)
 
@@ -43,15 +56,21 @@ def _empty_dir(d: Path) -> None:
             p.unlink()
 
 def gather_by_class(root: Path, exts: set[str]):
-    """Return dict: class_name -> list[Path] for images under root/<class>/*"""
+    """Return dict: class_name -> list[Path] for images under root/<class>/*
+
+    Notes
+    -----
+    - If `exts` is empty, accept any file extension (matches parser_utils.parse_exts('all')).
+    """
     mapping = defaultdict(list)
     if not root.exists():
         log.warning("Input root does not exist: %s", root)
         return mapping
+    accept_any = len(exts) == 0
     for class_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         cls = class_dir.name
         for p in class_dir.rglob("*"):
-            if p.is_file() and p.suffix.lower() in exts:
+            if p.is_file() and (accept_any or p.suffix.lower() in exts):
                 mapping[cls].append(p)
     return mapping
 
@@ -142,28 +161,55 @@ def main(argv=None) -> int:
                     help="Delete all existing files/dirs in DATA_DIR/training and DATA_DIR/testing before writing.")
     parser.add_argument("--save-remap-to-project-root", action="store_true",
                     help="Also save index_remap.json at project root (./index_remap.json).")
+    parser.add_argument("--config", type=Path, default=None,
+                    help="Optional YAML config file for split (config-first).")
+    parser.add_argument("--override", action="append", default=[],
+                    help="Override config values as key=val (e.g., test_frac=0.25 clear_dest=true). "
+                         "Repeat for multiple overrides.")
     
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)
     args = parser.parse_args(argv)
 
      # --- run-aware logging ---
+    # Run-aware logging (ties logs across stages)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="split")
-    
+    if args.log_file:
+        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="split")
+    else:
+        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="split")
     t0 = time.time()
-    random.seed(args.seed)
 
-    configure_logging(log_level=args.log_level, log_file=args.log_file)
+    # Resolve config (config-first with CLI fallback)
+    cfg = build_split_config(args.config, overrides=args.override)
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
-    exts = parse_exts(args.exts)
-    log.debug("split.args", extra={
-        "dataset": args.dataset, "pointer": str(args.pointer) if args.pointer else None,
-        "test_frac": args.test_frac, "seed": args.seed, "exts": sorted(exts) if exts else ["<any>"]
+    # Effective values (config wins; fall back to CLI/env defaults)
+    dataset_slug = os.getenv("DATASET_SLUG", cfg.dataset or args.dataset)
+    pointer = cfg.pointer or args.pointer or _pointer_path_for(dataset_slug)
+    test_frac = cfg.test_frac if cfg.test_frac is not None else args.test_frac
+    seed = cfg.seed if cfg.seed is not None else args.seed
+    clear_dest = bool(cfg.clear_dest or args.clear_dest)
+    save_remap_to_project_root = bool(cfg.save_remap_to_project_root or args.save_remap_to_project_root)
+
+    # exts from config if provided; otherwise from CLI; both go through parse_exts()
+    exts_source = cfg.exts if cfg.exts is not None else args.exts
+    exts = parse_exts(exts_source)  # empty set means “accept any”
+
+    # Seed *after* resolving config
+    random.seed(seed)
+
+    log.debug("split.args_effective", extra={
+        "dataset": dataset_slug,
+        "pointer": str(pointer),
+        "test_frac": test_frac,
+        "seed": seed,
+        "exts": sorted(exts) if exts else ["<any>"],
+        "clear_dest": clear_dest,
+        "save_remap_to_project_root": save_remap_to_project_root,
+        "mapping_use_dataset_subdir": bool(cfg.mapping_use_dataset_subdir),
+        "mapping_write_split_copy": bool(cfg.mapping_write_split_copy),
     })
-
-    dataset_slug = os.getenv("DATASET_SLUG", args.dataset)
-    pointer = args.pointer or _pointer_path_for(dataset_slug)
 
     if not pointer.exists():
         log.error("split.pointer_missing", extra={"pointer": str(pointer)})
@@ -182,17 +228,15 @@ def main(argv=None) -> int:
         log.error("split.pointer_key_error", extra={"missing": str(e), "pointer": str(pointer)})
         return 2
 
+    log.info("split.started", extra={"dataset": dataset_slug, "pointer": str(pointer), 
+                                     "test_frac": test_frac, "seed": seed, "exts": sorted(exts) if exts else ["<any>"]})
+
     train_out = DATA_DIR / "training"
     test_out  = DATA_DIR / "testing"
     train_out.mkdir(parents=True, exist_ok=True)
     test_out.mkdir(parents=True, exist_ok=True)
 
-    if args.clear_dest:
-        _empty_dir(train_out)
-        _empty_dir(test_out)
-        log.info("split.cleared_dest", extra={"train_out": str(train_out), "test_out": str(test_out)})
-
-    if args.clear_dest:
+    if clear_dest:
         _empty_dir(train_out)
         _empty_dir(test_out)
         log.info("split.cleared_dest", extra={"train_out": str(train_out), "test_out": str(test_out)})
@@ -214,7 +258,7 @@ def main(argv=None) -> int:
         n = len(uniq)
         if n == 0:
             continue
-        n_test = max(1, int(n * args.test_frac))
+        n_test = max(1, int(n * test_frac))
 
         test_paths = [Path(p) for p in uniq[:n_test]]
         train_paths = [Path(p) for p in uniq[n_test:]]
@@ -230,21 +274,21 @@ def main(argv=None) -> int:
     # 3) Build & write mapping (shared core), optionally copy elsewhere
     try:
         _build_and_write_mapping(
-            split_root=DATA_DIR,
-            prefer_subset="training",
-            dataset=None,                 # set to dataset_slug + use_dataset_subdir=True if you want nested mapping dirs
-            use_dataset_subdir=False,
-            write_split_copy=False,
-            also_save_project_root=args.save_remap_to_project_root,
-            project_root_path=Path("index_remap.json"),
-        )
+        split_root=DATA_DIR,
+        prefer_subset="training",
+        dataset=dataset_slug if cfg.mapping_use_dataset_subdir else None,
+        use_dataset_subdir=bool(cfg.mapping_use_dataset_subdir),
+        write_split_copy=bool(cfg.mapping_write_split_copy),
+        also_save_project_root=save_remap_to_project_root,
+        project_root_path=Path("index_remap.json"),
+)
     except Exception as e:
         log.error("split.index_remap.failed", extra={"error": str(e)})
         return 2
 
     # Final summary
     elapsed = time.time() - t0
-    log.info("split:done", extra={
+    log.info("split.done", extra={
         "train_out": str(train_out),
         "test_out": str(test_out),
         "elapsed_s": round(elapsed, 2),
@@ -253,7 +297,7 @@ def main(argv=None) -> int:
 
     for cls, ntr, nte in summary:
         print(f"{cls:15s} -> train: {ntr:5d} | test: {nte:5d}")
-        log.debug("split:summary", extra={"class": cls, "train": ntr, "test": nte})
+        log.debug("split.summary", extra={"class": cls, "train": ntr, "test": nte})
 
     return 0
 

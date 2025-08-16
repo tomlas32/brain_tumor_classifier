@@ -1,0 +1,9 @@
+dataset: sartajbhuvaji/brain-tumor-classification-mri
+# pointer: outputs/downloads_pointer/owner/brain-tumor-mri/latest.json  # (optional; overrides dataset)
+test_frac: 0.20
+seed: 42
+clear_dest: true
+exts: [".jpg", ".jpeg", ".png"]
+save_remap_to_project_root: true
+mapping_use_dataset_subdir: false
+mapping_write_split_copy: false

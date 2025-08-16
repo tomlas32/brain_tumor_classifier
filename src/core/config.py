@@ -24,6 +24,42 @@ import json
 import yaml  # PyYAML
 
 # ----------------------- Dataclasses (typed schema) ---------------------------
+@dataclass
+class SplitConfig:
+    """
+    Config for the 'split' stage.
+
+    dataset : str | None
+        Kaggle slug 'owner/dataset' used to auto-locate the latest fetch pointer.
+        Ignored if 'pointer' is provided.
+    pointer : Path | None
+        Explicit path to the fetch pointer JSON; overrides 'dataset'.
+    test_frac : float
+        Fraction per class for the final test set (0-1).
+    seed : int
+        RNG seed used for shuffling per-class pools.
+    clear_dest : bool
+        If true, empties DATA_DIR/training and DATA_DIR/testing before writing.
+    exts : list[str] | None
+        Allowed file extensions (lowercase, with leading dot). None means "any".
+        Example: ['.jpg', '.jpeg', '.png'].
+    save_remap_to_project_root : bool
+        Also save index_remap.json to the project root (./index_remap.json).
+    mapping_use_dataset_subdir : bool
+        If true, writes mapping under outputs/mappings/<owner>/<slug>/…
+    mapping_write_split_copy : bool
+        If true, copies index_remap.json into the split root (DATA_DIR).
+    """
+    dataset: Optional[str] = None
+    pointer: Optional[Path] = None
+    test_frac: float = 0.20
+    seed: int = 42
+    clear_dest: bool = False
+    exts: Optional[List[str]] = None
+    save_remap_to_project_root: bool = False
+    mapping_use_dataset_subdir: bool = False
+    mapping_write_split_copy: bool = False
+
 
 @dataclass
 class FetchConfig:
@@ -286,6 +322,48 @@ def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalCo
         run_id=base.get("run_id"),
     )
 
+def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> SplitConfig:
+    """
+    Build a SplitConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {
+        "dataset": None,
+        "pointer": None,
+        "test_frac": 0.20,
+        "seed": 42,
+        "clear_dest": False,
+        "exts": None,
+        "save_remap_to_project_root": False,
+        "mapping_use_dataset_subdir": False,
+        "mapping_write_split_copy": False,
+    }
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    # Normalize path-like fields
+    pointer = Path(base["pointer"]) if base.get("pointer") else None
+
+    # Normalize exts: accept list from YAML; if someone passed a comma string via override,
+    # let split.py convert it with its existing parse_exts().
+    exts = base.get("exts")
+    if isinstance(exts, str):
+        exts = [s.strip() for s in exts.split(",") if s.strip()]
+
+    return SplitConfig(
+        dataset=base.get("dataset"),
+        pointer=pointer,
+        test_frac=float(base.get("test_frac", 0.20)),
+        seed=int(base.get("seed", 42)),
+        clear_dest=bool(base.get("clear_dest", False)),
+        exts=exts if exts is None or isinstance(exts, list) else None,
+        save_remap_to_project_root=bool(base.get("save_remap_to_project_root", False)),
+        mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
+        mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
+    )
 
 def to_dict(dc) -> Dict[str, Any]:
     """Dataclass → plain dict (for logging/manifests)."""
