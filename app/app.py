@@ -1,138 +1,256 @@
+"""
+Brain Tumor MRI — Inference App (Streamlit)
+
+Features
+--------
+- Loads trained ResNet (18/34/50) weights from your pipeline.
+- Robust class mapping loader for index_remap.json (supports {idx: name} or {name: idx}).
+- ImageNet preprocessing at 224px (to match training).
+- Device auto-select (GPU if available).
+- Displays per-class probabilities and top-1 prediction.
+
+Author: Tomasz Lasota
+Date: 2025-08-16
+Version: 1.0
+"""
+
+from __future__ import annotations
+
 import io
 import json
-import os
+import logging
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 from PIL import Image
-
 import streamlit as st
 import torch
-import torch.nn.functional as F
-from torchvision import models, transforms
+import torch.nn as nn
+from torchvision import models, transforms as T
 
-# ---------------------------
-# UI SETUP
-# ---------------------------
-st.set_page_config(page_title="Brain Tumor Classifier", layout="wide")
-st.title("🧠 Brain Tumor MRI Classifier — Streamlit App")
-st.caption("Upload MRI scans and the corresponding class index mapping JSON to get model predictions.")
 
-# ---------------------------
-# HELPERS
-# ---------------------------
-def resize_and_pad_pil(img: Image.Image, size: int = 224) -> Image.Image:
-    w, h = img.size
-    scale = size / max(w, h)
-    new_w, new_h = int(w * scale), int(h * scale)
-    interp = Image.LANCZOS if scale < 1 else Image.BICUBIC
-    img = img.resize((new_w, new_h), interp)
-    new_img = Image.new("RGB", (size, size), (0, 0, 0))
-    left = (size - new_w) // 2
-    top = (size - new_h) // 2
-    new_img.paste(img, (left, top))
-    return new_img
+# --------------------------- Logging -----------------------------------------
 
-def get_default_transform(img_size: int = 224) -> transforms.Compose:
-    return transforms.Compose([
-        transforms.Lambda(lambda im: resize_and_pad_pil(im.convert("RGB"), img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+log = logging.getLogger("app.inference")
+if not log.handlers:
+    handler = logging.StreamHandler()
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    handler.setFormatter(fmt)
+    log.addHandler(handler)
+log.setLevel(logging.INFO)
+
+
+# --------------------------- Utils -------------------------------------------
+
+def normalize_class_names(mapping: Dict) -> List[str]:
+    """
+    Normalize class names from a JSON mapping.
+
+    Accepts either:
+    - idx -> name    e.g., {"0": "Glioma", "1": "Meningioma", ...}
+    - name -> idx    e.g., {"Glioma": 0, "Meningioma": 1, ...}
+
+    Returns
+    -------
+    list[str]: Ordered class names by index.
+    """
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("index_remap.json must be a non-empty object.")
+
+    keys = list(mapping.keys())
+    vals = list(mapping.values())
+
+    # idx -> name (preferred by pipeline)
+    if all(str(k).isdigit() for k in keys):
+        return [name for _, name in sorted(mapping.items(), key=lambda kv: int(kv[0]))]
+
+    # name -> idx (legacy)
+    if all(isinstance(v, int) or str(v).isdigit() for v in vals):
+        return [name for name, idx in sorted(mapping.items(), key=lambda kv: int(kv[1]))]
+
+    raise ValueError("Unrecognized index_remap format. Expected {idx: name} or {name: idx}.")
+
+
+def build_preprocess(image_size: int = 224) -> T.Compose:
+    """
+    Preprocessing to mirror training/evaluation:
+    - Resize shorter side to `image_size` and center-crop (or direct resize to square).
+    - Convert to tensor.
+    - Normalize with ImageNet stats.
+    """
+    return T.Compose([
+        T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225]),
     ])
 
-@st.cache_resource(show_spinner=False)
-def load_model(num_classes: int, model_weights: bytes | None = None, architecture: str = "resnet18") -> torch.nn.Module:
+
+def build_model(architecture: str, num_classes: int) -> nn.Module:
+    """
+    Build a torchvision ResNet and replace the classifier head for `num_classes`.
+    """
+    architecture = architecture.lower().strip()
     if architecture == "resnet18":
-        model = models.resnet18(weights=None)
-        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+        m = models.resnet18(weights=None)
     elif architecture == "resnet34":
-        model = models.resnet34(weights=None)
-        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+        m = models.resnet34(weights=None)
+    elif architecture == "resnet50":
+        m = models.resnet50(weights=None)
     else:
-        raise ValueError("Unsupported architecture.")
+        raise ValueError(f"Unsupported architecture: {architecture}")
 
-    if model_weights is not None:
-        buffer = io.BytesIO(model_weights)
-        state = torch.load(buffer, map_location="cpu")
-        if isinstance(state, dict) and "state_dict" in state:
-            state = state["state_dict"]
-        state = {k.replace("module.", ""): v for k, v in state.items()}
-        missing, unexpected = model.load_state_dict(state, strict=False)
+    in_features = m.fc.in_features
+    m.fc = nn.Linear(in_features, num_classes)
+    return m
+
+
+def load_state_dict_flexible(model: nn.Module, weight_bytes: bytes, device: torch.device) -> None:
+    """
+    Load weights from uploaded bytes. Accepts:
+    - raw state_dict
+    - wrapper dict with 'state_dict' key
+    - keys possibly prefixed with 'module.' (DataParallel)
+
+    Uses strict=True where possible; falls back to strict=False with a warning.
+    """
+    buf = io.BytesIO(weight_bytes)
+    sd = torch.load(buf, map_location=device)
+
+    if isinstance(sd, dict) and "state_dict" in sd and isinstance(sd["state_dict"], dict):
+        sd = sd["state_dict"]
+
+    # Strip 'module.' if present
+    if isinstance(sd, dict):
+        new_sd = {}
+        for k, v in sd.items():
+            if k.startswith("module."):
+                new_sd[k[len("module."):]] = v
+            else:
+                new_sd[k] = v
+        sd = new_sd
+
+    try:
+        model.load_state_dict(sd, strict=True)
+    except Exception as e:
+        log.warning("Strict load failed, retrying with strict=False. Error=%s", str(e))
+        missing, unexpected = model.load_state_dict(sd, strict=False)
         if missing or unexpected:
-            st.error(f"Model weight mismatch. Missing: {missing}, Unexpected: {unexpected}")
-            st.stop()
+            log.warning("Missing keys: %s | Unexpected keys: %s", missing, unexpected)
 
+
+def predict_one(model: nn.Module, device: torch.device, img_pil: Image.Image, tf: T.Compose) -> Tuple[int, np.ndarray]:
+    """
+    Run a single-image prediction.
+
+    Returns
+    -------
+    (pred_idx, probs_np)
+    """
     model.eval()
-    return model
-
-def to_device(model: torch.nn.Module) -> Tuple[torch.nn.Module, torch.device]:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return model.to(device), device
-
-def softmax_numpy(logits: torch.Tensor) -> np.ndarray:
-    return F.softmax(logits, dim=1).detach().cpu().numpy()
-
-# ---------------------------
-# SIDEBAR CONTROLS
-# ---------------------------
-st.sidebar.header("Configuration")
-arch = st.sidebar.selectbox("Architecture", ["resnet18", "resnet34"], index=0)
-st.sidebar.caption("Image size is fixed to match training settings to avoid mismatches.")
-img_size = 224  # Fixed to match training preprocessing
-
-class_file = st.sidebar.file_uploader("Class index mapping (index_remap.json)", type=["json"], help="JSON mapping of class_name:index.")
-model_file = st.sidebar.file_uploader("Model weights (.pth/.pt)", type=["pth", "pt"])
-
-if not class_file:
-    st.warning("Please upload index_remap.json to proceed.")
-    st.stop()
-
-# Load classes from JSON mapping
-class_mapping = json.load(class_file)
-class_names = [k for k, _ in sorted(class_mapping.items(), key=lambda x: x[1])]
-
-# ---------------------------
-# LOAD MODEL
-# ---------------------------
-with st.spinner("Loading model…"):
-    model = load_model(num_classes=len(class_names), model_weights=model_file.read() if model_file else None, architecture=arch)
-    model, device = to_device(model)
-
-# ---------------------------
-# IMAGE UPLOAD
-# ---------------------------
-st.subheader("1) Upload MRI scans")
-files = st.file_uploader("Drop multiple images here (PNG/JPG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
-
-if not files:
-    st.info("Upload one or more images to get predictions.")
-    st.stop()
-
-# ---------------------------
-# PREDICTION
-# ---------------------------
-st.subheader("2) Predictions")
-transform = get_default_transform(img_size)
-
-pred_rows = []
-for f in files:
-    pil = Image.open(f)
-    proc = transform(pil)
-    xb = proc.unsqueeze(0).to(device)
-    with torch.no_grad():
+    with torch.inference_mode():
+        xb = tf(img_pil).unsqueeze(0).to(device)
         logits = model(xb)
-    probs = softmax_numpy(logits)
-    top_idx = int(np.argmax(probs[0]))
-    top_prob = float(probs[0, top_idx])
+        probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
+        pred_idx = int(np.argmax(probs))
+        return pred_idx, probs
 
-    row = {"filename": f.name, "pred_class": class_names[top_idx], "confidence": round(top_prob, 4)}
-    for i, c in enumerate(class_names):
-        row[f"p({c})"] = round(float(probs[0, i]), 4)
-    pred_rows.append(row)
 
-import pandas as pd
-st.dataframe(pd.DataFrame(pred_rows), use_container_width=True, hide_index=True)
+# --------------------------- Streamlit UI ------------------------------------
 
-st.markdown("---")
-st.caption("Classes loaded from index_remap.json. Ensure it matches the training order.")
+st.set_page_config(page_title="Brain Tumor MRI — Inference", page_icon="🧠", layout="centered")
+
+st.title("🧠 Brain Tumor MRI — Inference")
+st.caption("Upload your trained weights and index_remap.json, then drop MRI images to classify.")
+
+with st.sidebar:
+    st.header("Configuration")
+    arch = st.selectbox("Architecture", ["resnet18", "resnet34", "resnet50"], index=0)
+
+    st.markdown("**Image size** is fixed to 224 to match training.")
+    image_size = 224
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    st.write(f"Device: `{device.type}`")
+
+    weights_file = st.file_uploader("Model weights (.pth/.pt)", type=["pth", "pt"])
+    mapping_file = st.file_uploader("Class mapping (index_remap.json)", type=["json"])
+
+st.divider()
+
+# Inputs validation
+if not weights_file:
+    st.warning("Please upload **trained model weights** (.pth or .pt) in the sidebar to enable inference.")
+    st.stop()
+
+if not mapping_file:
+    st.warning("Please upload **index_remap.json** (class mapping) in the sidebar.")
+    st.stop()
+
+# Load classes
+try:
+    class_mapping = json.load(mapping_file)
+    class_names = normalize_class_names(class_mapping)
+except Exception as e:
+    st.error(f"Failed to parse class mapping: {e}")
+    st.stop()
+
+# Build model
+num_classes = len(class_names)
+try:
+    model = build_model(arch, num_classes)
+except Exception as e:
+    st.error(f"Failed to build model: {e}")
+    st.stop()
+
+# Load weights
+try:
+    load_state_dict_flexible(model, weights_file.read(), device)
+    model = model.to(device)
+except Exception as e:
+    st.error(f"Failed to load weights: {e}")
+    st.stop()
+
+# Preprocess
+preprocess = build_preprocess(image_size=image_size)
+
+# Sanity display
+with st.expander("Class Index → Name mapping", expanded=False):
+    st.write({i: name for i, name in enumerate(class_names)})
+
+# Image uploader
+st.subheader("Upload images")
+uploads = st.file_uploader("Select one or more MRI images", type=["png", "jpg", "jpeg", "bmp", "webp"], accept_multiple_files=True)
+
+if not uploads:
+    st.info("No images uploaded yet.")
+    st.stop()
+
+# Predict each image
+for f in uploads:
+    try:
+        img = Image.open(f).convert("RGB")
+    except Exception as e:
+        st.error(f"Could not read image `{f.name}`: {e}")
+        continue
+
+    pred_idx, probs = predict_one(model, device, img, preprocess)
+    top1_name = class_names[pred_idx]
+    top1_prob = float(probs[pred_idx])
+
+    # Layout
+    col1, col2 = st.columns([1, 1.2])
+    with col1:
+        st.image(img, caption=f.name, use_container_width=True)
+    with col2:
+        st.markdown(f"### Prediction: **{top1_name}**")
+        st.write(f"Confidence: **{top1_prob:.3f}**")
+        # Prob table
+        st.markdown("**Per-class probabilities**")
+        # Build a small table sorted by prob desc
+        order = np.argsort(-probs)
+        rows = [{"class": class_names[i], "probability": float(probs[i])} for i in order]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+st.success("Done.")
