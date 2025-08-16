@@ -1,0 +1,6 @@
+train_in: data/training
+train_out: data/training_resized
+test_in: data/testing
+test_out: data/testing_resized
+size: 244
+exts: all         # or ['.jpg', '.jpeg', '.png']

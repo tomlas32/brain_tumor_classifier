@@ -24,6 +24,30 @@ import json
 import yaml  # PyYAML
 
 # ----------------------- Dataclasses (typed schema) ---------------------------
+
+@dataclass
+class ResizeConfig:
+    """
+    Config for the 'resize' stage.
+
+    train_in / train_out / test_in / test_out :
+        I/O roots (class-structured) for source and destination.
+    size : int
+        Target square size in pixels (e.g., 224).
+    exts : list[str] | str | null
+        Allowed extensions. Accepts:
+          - list (e.g., ['.jpg','.png'])
+          - 'all' (accept any)
+          - null  (use script default semantics)
+    """
+    train_in: Optional[Path] = None
+    train_out: Optional[Path] = None
+    test_in: Optional[Path] = None
+    test_out: Optional[Path] = None
+    size: int = 224
+    exts: Optional[object] = None  # list[str] | 'all' | None
+
+
 @dataclass
 class SplitConfig:
     """
@@ -364,6 +388,35 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
         mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
         mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
     )
+
+
+def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> ResizeConfig:
+    """
+    Build a ResizeConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {
+        "train_in": None, "train_out": None,
+        "test_in": None,  "test_out": None,
+        "size": 224, "exts": None,
+    }
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    # Normalize paths if provided
+    def _p(x): return Path(x) if x is not None else None
+    return ResizeConfig(
+        train_in=_p(base.get("train_in")),
+        train_out=_p(base.get("train_out")),
+        test_in=_p(base.get("test_in")),
+        test_out=_p(base.get("test_out")),
+        size=int(base.get("size", 224)),
+        exts=base.get("exts"),  # leave as-is; script will parse via parse_exts()
+    )
+
 
 def to_dict(dc) -> Dict[str, Any]:
     """Dataclass → plain dict (for logging/manifests)."""

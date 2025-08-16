@@ -37,17 +37,15 @@ Exit codes
 
 Examples
 --------
-# Use defaults (224 px, default extensions)
-python -m src.pipeline.resize
+# Config-first
+python -m src.pipeline.resize --config configs/resize.yaml
 
-# Accept any file type under the inputs
-python -m src.pipeline.resize --exts all
+# Config + overrides
+python -m src.pipeline.resize --config configs/resize.yaml \
+  --override size=224 --override exts=.jpg,.png
 
-# Add WEBP and GIF on top of defaults
-python -m src.pipeline.resize --exts +webp,+gif
-
-# Custom size and explicit I/O roots
-python -m src.pipeline.resize --size 256 --train-in data/training --train-out data/training_256
+# Legacy (no config)
+python -m src.pipeline.resize --size 224 --exts all
 
 Notes
 -----
@@ -69,6 +67,8 @@ import numpy as np
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
 from src.utils.paths import DATA_DIR
+
+from src.core.config import build_resize_config, to_dict
 
 log = get_logger(__name__)
 
@@ -232,6 +232,11 @@ def main(argv=None) -> int:
     parser.add_argument("--test-in",   type=Path, default=TEST_INPUT,  help="Input testing root (from split).")
     parser.add_argument("--test-out",  type=Path, default=TEST_OUT,    help="Output root for resized testing images.")
     parser.add_argument("--size", type=int, default=224, help="Output square size in pixels (e.g., 224).")
+    parser.add_argument("--config", type=Path, default=None,
+                    help="Optional YAML config file for resize (config-first).")
+    parser.add_argument("--override", action="append", default=[],
+                        help="Override config values as key=val (e.g., size=256 exts=all). "
+                            "Repeat for multiple overrides.")
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)
@@ -240,39 +245,51 @@ def main(argv=None) -> int:
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="resize")
 
-    exts = parse_exts(args.exts)  # empty set means “accept any” (matches 'all')
+    # Resolve config-first (YAML + overrides), with CLI fallback for backward compat
+    cfg = build_resize_config(args.config, overrides=args.override)
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    train_in  = cfg.train_in  or args.train_in
+    train_out = cfg.train_out or args.train_out
+    test_in   = cfg.test_in   or args.test_in
+    test_out  = cfg.test_out  or args.test_out
+    size      = cfg.size if cfg.size is not None else args.size
+
+    # exts from config if provided; otherwise from CLI; both parse via parser_utils
+    exts_source = cfg.exts if cfg.exts is not None else args.exts
+    exts = parse_exts(exts_source)  # empty set means “accept any” (matches 'all')
 
     # --- Guards: ensure split has produced inputs with images ---
-    train_ct = _count_images(args.train_in, exts)
-    test_ct  = _count_images(args.test_in,  exts)
+    train_ct = _count_images(train_in, exts)
+    test_ct  = _count_images(test_in,  exts)
 
-    if not args.train_in.exists() and not args.test_in.exists():
-        log.error("resize.inputs_missing", extra={"train_in": str(args.train_in), "test_in": str(args.test_in)})
+    if not train_in.exists() and not test_in.exists():
+        log.error("resize.inputs_missing", extra={"train_in": str(train_in), "test_in": str(test_in)})
         print("❌ Neither training nor testing input directories exist. Run split first.")
         return 2
 
     if train_ct == 0 and test_ct == 0:
         log.error("resize.no_images_found", extra={
-            "train_in": str(args.train_in), "test_in": str(args.test_in),
+            "train_in": str(train_in), "test_in": str(test_in),
             "exts": sorted(exts) or ["<any>"],
         })
         print("❌ No images found to resize (did you run split? Check extensions with --exts).")
         return 3
 
     # Create outputs only when we’re sure we have something to do
-    args.train_out.mkdir(parents=True, exist_ok=True)
-    args.test_out.mkdir(parents=True, exist_ok=True)
+    train_out.mkdir(parents=True, exist_ok=True)
+    test_out.mkdir(parents=True, exist_ok=True)
 
-    train_found, train_resized = process_images(args.train_in, args.train_out, exts, args.size)
-    test_found,  test_resized  = process_images(args.test_in,  args.test_out,  exts, args.size)
+    train_found, train_resized = process_images(train_in, train_out, exts, size)
+    test_found,  test_resized  = process_images(test_in,  test_out,  exts, size)
 
     total_found   = train_found + test_found
     total_resized = train_resized + test_resized
 
     log.info("resize.done", extra={
-        "size": args.size,
-        "train_in": str(args.train_in), "train_out": str(args.train_out),
-        "test_in": str(args.test_in),   "test_out": str(args.test_out),
+        "size": size,
+        "train_in": str(train_in), "train_out": str(train_out),
+        "test_in": str(test_in),   "test_out": str(test_out),
         "found": total_found, "resized": total_resized
     })
 
