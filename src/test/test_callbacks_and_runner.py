@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-
+from src.utils.logging_utils import get_logger
 import pytest
 
 # Import the training runner inputs + run()
@@ -139,39 +139,129 @@ def _base_inputs(tmp_path, args_dict_overrides=None):
     )
 
 
-def test_early_stopping_triggers(tmp_path, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+def test_early_stopping_triggers(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+    """
+    Expect: training stops early and logs `callback.early_stop`.
+    """
+    log = get_logger("src.training.runner")
+    caplog.set_level("INFO", logger=log.name)
+
     inputs = _base_inputs(tmp_path)
     best_f1, best_epoch, ckpt_path = run_training(inputs)
 
-    # With patience=2 and the fake F1 curve, training should stop before 10 epochs
-    assert best_epoch < inputs.epochs
-    assert ckpt_path.exists()
+    # Filesystem effects
+    assert best_epoch < inputs.epochs, "Expected early stop before max epochs"
+    assert ckpt_path.exists(), "Best checkpoint should exist"
+
+    # Log assertions
+    records = [r for r in caplog.records if r.name == log.name]
+    assert any(r.message == "callback.early_stop" for r in records), \
+        "Expected 'callback.early_stop' in logs"
 
 
-def test_checkpoint_best_and_last(tmp_path, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+def test_checkpoint_best_and_last(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+    """
+    Expect: best checkpoint saved (dynamic name), last.pth saved each epoch,
+    and both actions logged with `checkpoint.saved`.
+    """
+    log = get_logger("src.training.runner")
+    caplog.set_level("INFO", logger=log.name)
+
     inputs = _base_inputs(tmp_path)
     _, _, ckpt_path = run_training(inputs)
 
-    # best checkpoint (dynamic name) exists
-    assert ckpt_path.exists()
-    # last checkpoint exists because save_last: true
+    # Filesystem effects
+    assert ckpt_path.exists(), "Best checkpoint missing"
     last = inputs.out_models / "last.pth"
-    assert last.exists()
-    # index_remap copied next to checkpoint
-    assert (ckpt_path.parent / "index_remap.json").exists()
+    assert last.exists(), "last.pth should be saved (save_last=true)"
+    assert (ckpt_path.parent / "index_remap.json").exists(), "index_remap.json should be copied next to checkpoint"
+
+    # Log assertions
+    records = [r for r in caplog.records if r.name == log.name and r.message == "checkpoint.saved"]
+    assert len(records) >= 2, "Expected at least two 'checkpoint.saved' logs (best + last)"
 
 
-def test_lr_logger_json(tmp_path, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+def test_lr_logger_json_and_log(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+    """
+    Expect: LR history JSON written and `lr_logger.written` logged.
+    """
+    log = get_logger("src.training.runner")
+    caplog.set_level("INFO", logger=log.name)
+
     inputs = _base_inputs(tmp_path)
     _, best_epoch, _ = run_training(inputs)
 
-    # lr history written
+    # Filesystem effects
     lr_hist_files = list((inputs.out_summary).glob("lr_history_*.json"))
     assert lr_hist_files, "LR history JSON not found"
-
     payload = json.loads(lr_hist_files[0].read_text(encoding="utf-8"))
     hist = payload["history"]
-    # One entry per epoch actually run (including early stop)
-    assert len(hist) == best_epoch
-    # Each record has epoch + lr
-    assert {"epoch", "lr"}.issubset(hist[0].keys())
+    assert len(hist) == best_epoch, "LR history length should match epochs actually run"
+    assert {"epoch", "lr"}.issubset(hist[0].keys()), "LR history entries must include 'epoch' and 'lr'"
+
+    # Log assertions
+    assert any(r.name == log.name and r.message == "lr_logger.written" for r in caplog.records), \
+        "Expected 'lr_logger.written' log"
+
+
+def test_checkpoint_periodic(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+    """
+    Expect: periodic checkpoints at epochs 2 and 4, and logs for each save.
+    """
+    log = get_logger("src.training.runner")
+    caplog.set_level("INFO", logger=log.name)
+
+    # Enable periodic snapshots every 2 epochs; disable ES to run full loop
+    args_overrides = {
+        "callbacks": {
+            "early_stopping": {"enabled": False},
+            "checkpoint": {"save_best": True, "save_last": False, "every_n_epochs": 2},
+            "lr_logger": {"enabled": False},
+        }
+    }
+    inputs = _base_inputs(tmp_path, args_overrides)
+    inputs.epochs = 5  # → expect ckpt_epoch2 & ckpt_epoch4
+    _ = run_training(inputs)
+
+    # Filesystem effects
+    assert (inputs.out_models / "ckpt_epoch2.pth").exists(), "Missing periodic checkpoint @2"
+    assert (inputs.out_models / "ckpt_epoch4.pth").exists(), "Missing periodic checkpoint @4"
+
+    # Log assertions (optional)
+    saves = [r for r in caplog.records if r.name == log.name and r.message == "checkpoint.saved"]
+    assert any("ckpt_epoch2.pth" in str(getattr(r, "__dict__", {})) for r in saves), "Expected log for ckpt_epoch2.pth"
+    assert any("ckpt_epoch4.pth" in str(getattr(r, "__dict__", {})) for r in saves), "Expected log for ckpt_epoch4.pth"
+
+
+def test_scheduler_selected_logged(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
+    # Get the runner logger (same as used in training runner)
+    log = get_logger("src.training.runner")
+
+    args_overrides = {
+        "sched": {"name": "steplr", "params": {"step_size": 7, "gamma": 0.3}},
+        "callbacks": {
+            "early_stopping": {"enabled": True, "patience": 1},
+            "checkpoint": {"save_best": True, "save_last": False, "every_n_epochs": 0},
+            "lr_logger": {"enabled": False},
+        },
+    }
+    inputs = _base_inputs(tmp_path, args_overrides)
+    inputs.epochs = 2
+
+    # Capture logs emitted by our project logger
+    caplog.set_level("INFO", logger=log.name)
+    _ = run_training(inputs)
+
+    # Verify a structured log entry with key 'scheduler.selected' was emitted
+    records = [r for r in caplog.records if r.name == log.name]
+    assert any(r.message == "scheduler.selected" for r in records), "Expected 'scheduler.selected' log"
+
+    # Ensure extras (params) were attached
+    found = False
+    for r in records:
+        if r.message == "scheduler.selected":
+            assert "step_size" in r.__dict__["extra"]
+            assert "gamma" in r.__dict__["extra"]
+            found = True
+    assert found, "Expected scheduler parameters in log extra"
+
