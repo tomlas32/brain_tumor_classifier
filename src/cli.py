@@ -35,6 +35,7 @@ def fetch(
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). Repeatable."),
+    dry_run: bool = False,
 ):
     
     """
@@ -92,6 +93,8 @@ def fetch(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    if dry_run:                            # <-- NEW
+        argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "fetch", "argv": argv})
 

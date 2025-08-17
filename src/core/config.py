@@ -406,19 +406,21 @@ def _to_nested_dict(obj) -> dict:
 
 def load_yaml_config(path: Path) -> dict:
     """
-    Load a YAML file into a plain dict.
+    Load a YAML file into a plain dict, with Windows-friendly path normalization.
 
-    Parameters
-    ----------
-    path : Path
-        YAML path.
-
-    Returns
-    -------
-    dict
-        Parsed configuration as a nested dict.
+    If the given path is rooted (e.g., "\configs\foo.yaml") but does not exist,
+    it is reinterpreted as relative to the current working directory.
     """
-    with Path(path).open("r", encoding="utf-8") as f:
+    p = Path(path)
+    try_path = p
+
+    # Windows/Unix safety: handle accidental rooted-but-missing paths like "\configs\..."
+    if not try_path.exists() and (str(p).startswith("\\") or str(p).startswith("/")):
+        rel_try = Path.cwd() / str(p).lstrip("\\/")
+        if rel_try.exists():
+            try_path = rel_try
+
+    with try_path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         raise ValueError("Top-level YAML must be a mapping (dict).")
