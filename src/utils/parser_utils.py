@@ -79,30 +79,42 @@ def add_exts_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def parse_exts(exts_str: str) -> set[str]:
+def parse_exts(exts) -> set[str]:
     """
-    Convert a comma-separated extension string into a normalized set.
-    - If it starts with '+', extensions are ADDED to DEFAULT_EXTS.
-    - If it equals 'all' (case-insensitive), no filtering is applied (returns empty set to mean 'accept all').
+    Normalize extensions to a set of lowercase, dot-prefixed suffixes.
+
+    Accepts:
+      - 'all' (str, case-insensitive)  → empty set (caller interprets as 'accept any')
+      - '+webp,+gif' (str)             → DEFAULT_EXTS ∪ {'.webp','.gif'}
+      - '.jpg,.png' (str)              → {'.jpg','.png'}
+      - ['.jpg','.png'] (list/tuple/set) → {'.jpg','.png'}
+      - None                           → defaults to parsing DEFAULT_EXTS
+
+    Notes:
+      - '+' semantics apply only for string inputs (to extend DEFAULT_EXTS).
+      - For iterables, items are normalized but not merged with DEFAULT_EXTS.
     """
-    s = exts_str.strip().lower()
-    if s == "all":
-        return set()  # interpret as 'accept any extension'
+    def normalize_ext(e: str) -> str:
+        e = e.strip().lower()
+        return e if e.startswith(".") else f".{e}"
 
-    if s.startswith("+"):
-        base = {normalize_ext(e) for e in DEFAULT_EXTS.split(",") if e}
-        extras = {
-            normalize_ext(e.lstrip("+"))  # ← strip '+' per item
-            for e in s.split(",")
-            if e
-        }
-        return base | extras
+    if exts is None:
+        # use project default list from DEFAULT_EXTS (comma string)
+        return {normalize_ext(e) for e in DEFAULT_EXTS.split(",") if e}
 
-    return {normalize_ext(e) for e in s.split(",") if e}
+    if isinstance(exts, str):
+        s = exts.strip().lower()
+        if s == "all":
+            return set()  # accept any
+        if s.startswith("+"):
+            base = {normalize_ext(e) for e in DEFAULT_EXTS.split(",") if e}
+            extras = {normalize_ext(e.lstrip("+")) for e in s.split(",") if e}
+            return base | extras
+        # plain comma list
+        return {normalize_ext(e) for e in s.split(",") if e}
 
-def normalize_ext(e: str) -> str:
-    e = e.strip().lower().lstrip("+")  # defensive: strip '+' if present
-    return e if e.startswith(".") else f".{e}"
+    # list / tuple / set
+    return {normalize_ext(str(e)) for e in exts if str(e).strip()}
 
 
 def add_common_train_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:

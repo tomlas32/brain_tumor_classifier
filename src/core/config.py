@@ -598,19 +598,13 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
     # Normalize path-like fields
     pointer = Path(base["pointer"]) if base.get("pointer") else None
 
-    # Normalize exts: accept list from YAML; if someone passed a comma string via override,
-    # let split.py convert it with its existing parse_exts().
-    exts = base.get("exts")
-    if isinstance(exts, str):
-        exts = [s.strip() for s in exts.split(",") if s.strip()]
-
     return SplitConfig(
         dataset=base.get("dataset"),
         pointer=pointer,
         test_frac=float(base.get("test_frac", 0.20)),
         seed=int(base.get("seed", 42)),
         clear_dest=bool(base.get("clear_dest", False)),
-        exts=exts if exts is None or isinstance(exts, list) else None,
+        exts=base.get("exts"),
         save_remap_to_project_root=bool(base.get("save_remap_to_project_root", False)),
         mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
         mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
