@@ -166,6 +166,7 @@ def resize(
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., size=256 exts=all). Repeatable."),
+    dry_run: bool = False,
 
 ):
     """
@@ -199,6 +200,8 @@ def resize(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    if dry_run:                            
+        argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "resize", "argv": argv})
 

@@ -70,6 +70,9 @@ from src.utils.paths import DATA_DIR
 
 from src.core.config import build_resize_config, to_dict
 
+from src.pipeline.resize_planner import plan_resize, make_log_extra, render_human, build_empty_plan_context
+
+
 log = get_logger(__name__)
 
 # Default I/O roots
@@ -237,6 +240,7 @@ def main(argv=None) -> int:
     parser.add_argument("--override", action="append", default=[],
                         help="Override config values as key=val (e.g., size=256 exts=all). "
                             "Repeat for multiple overrides.")
+    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not split files/create dir.")
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)
@@ -258,6 +262,33 @@ def main(argv=None) -> int:
     # exts from config if provided; otherwise from CLI; both parse via parser_utils
     exts_source = cfg.exts if cfg.exts is not None else args.exts
     exts = parse_exts(exts_source)  # empty set means “accept any” (matches 'all')
+
+    
+    # ---DRY RUN---
+    dry = bool(getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False))
+
+    # Precompute existence and counts (but do not mkdir / write)
+    train_exists = Path(train_in).exists()
+    test_exists  = Path(test_in).exists()
+
+    if dry:
+        if not train_exists and not test_exists:
+            # If no files / dirs exists ()
+            plan, extra = build_empty_plan_context(
+                train_in=train_in, train_out=train_out,
+                test_in=test_in,  test_out=test_out,
+                exts=sorted(exts) if exts else [],
+                size=size,
+            )
+        else:
+            plan = plan_resize(train_in, train_out, test_in, test_out, exts, size)
+            extra = make_log_extra(plan)
+
+        log.info("dry_run.resize.plan", extra=extra)
+        print(render_human(plan, extra))
+        return 0
+    
+    # ---DRY RUN END---
 
     # --- Guards: ensure split has produced inputs with images ---
     train_ct = _count_images(train_in, exts)

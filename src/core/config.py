@@ -83,6 +83,7 @@ class ResizeConfig:
     test_out: Optional[Path] = None
     size: int = 224
     exts: Optional[object] = None  # list[str] | 'all' | None
+    dry_run: bool = False  # for testing
 
 
 @dataclass
@@ -636,7 +637,8 @@ def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> Resi
         test_in=_p(base.get("test_in")),
         test_out=_p(base.get("test_out")),
         size=int(base.get("size", 224)),
-        exts=base.get("exts"),  # leave as-is; script will parse via parse_exts()
+        exts=base.get("exts"),  
+        dry_run=bool(base.get("dry_run", False)),
     )
 
 def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> ValidateConfig:
@@ -666,7 +668,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         in_dir=_p(base.get("in_dir")),
         index_remap=_p(base.get("index_remap")),
         size=int(base.get("size", 224)),
-        exts=base.get("exts"),  # leave parsing to validate.py via parse_exts()
+        exts=base.get("exts"),  
         dup_check=bool(base.get("dup_check", False)),
         warn_low_std=float(base.get("warn_low_std", 3.0)),
         min_file_bytes=int(base.get("min_file_bytes", 1024)),
