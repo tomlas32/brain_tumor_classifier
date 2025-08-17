@@ -2,4 +2,4 @@
 /.venv/
 /data/
 __pycache__/
-/*.txt
+/btc_old_data/
