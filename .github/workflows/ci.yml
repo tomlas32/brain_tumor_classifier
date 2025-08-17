@@ -29,6 +29,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Show working directory
+        run: |
+          pwd
+          ls -la
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -54,6 +58,10 @@ jobs:
           echo "DATA_DIR=$DATA_DIR"
           echo "MODELS_DIR=$MODELS_DIR"
           echo "OUTPUTS_DIR=$OUTPUTS_DIR"
+      
+      - name: Dry-run fetch stage
+        run: |
+          python -m src.cli fetch --config src/configs/fetch.yaml --dry-run
 
       - name: Run tests
         run: |
