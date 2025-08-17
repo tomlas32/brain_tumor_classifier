@@ -47,6 +47,8 @@ from src.core.mapping import write_index_remap as mapping_write_index_remap, cop
 from src.core.config import build_split_config, to_dict
 from src.core.artifacts import read_fetch_pointer, write_mapping_pointer
 
+from src.pipeline.split_planner import plan_split, make_log_extra, render_human
+
 log = get_logger(__name__)
 
 def _pointer_path_for(slug: str) -> Path:
@@ -173,12 +175,12 @@ def main(argv=None) -> int:
     parser.add_argument("--override", action="append", default=[],
                     help="Override config values as key=val (e.g., test_frac=0.25 clear_dest=true). "
                          "Repeat for multiple overrides.")
+    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not create/clear outputs or write files.")
     
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)
     args = parser.parse_args(argv)
 
-     # --- run-aware logging ---
     # Run-aware logging (ties logs across stages)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     if args.log_file:
@@ -248,6 +250,39 @@ def main(argv=None) -> int:
     log.info("split.started", extra={"dataset": dataset_slug, "pointer": str(pointer), 
                                      "test_frac": test_frac, "seed": seed, "exts": sorted(exts) if exts else ["<any>"]})
 
+
+    # 1) Pool images from both roots
+    combined = defaultdict(list)
+    for src_root in (src_training, src_testing):
+        src_map = gather_by_class(src_root, exts)
+        for cls, paths in src_map.items():
+            combined[cls].extend(paths)
+    log.debug("split.combined_counts", extra={k: len(v) for k, v in combined.items()})
+
+    # --- DRY-RUN logic (EARLY EXIT) ---
+    if getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False):
+        plan = plan_split(combined, test_frac=test_frac, seed=seed)
+        extra = make_log_extra(
+            plan,
+            dataset_slug=dataset_slug,
+            pointer=pointer,
+            src_training=src_training,
+            src_testing=src_testing,
+            exts=exts,
+            test_frac=test_frac,
+            seed=seed,
+            clear_dest=clear_dest,
+            out_training=DATA_DIR / "training",
+            out_testing=DATA_DIR / "testing",
+            mapping_use_dataset_subdir=cfg.mapping_use_dataset_subdir,
+            mapping_write_split_copy=cfg.mapping_write_split_copy,
+            save_remap_to_project_root=save_remap_to_project_root,
+        )
+        log.info("dry_run.split.plan", extra=extra)
+        print(render_human(plan, extra))
+        return 0
+    # --- end DRY RUN ---
+
     train_out = DATA_DIR / "training"
     test_out  = DATA_DIR / "testing"
     train_out.mkdir(parents=True, exist_ok=True)
@@ -257,14 +292,6 @@ def main(argv=None) -> int:
         _empty_dir(train_out)
         _empty_dir(test_out)
         log.info("split.cleared_dest", extra={"train_out": str(train_out), "test_out": str(test_out)})
-
-    # 1) Pool images from both roots
-    combined = defaultdict(list)
-    for src_root in (src_training, src_testing):
-        src_map = gather_by_class(src_root, exts)
-        for cls, paths in src_map.items():
-            combined[cls].extend(paths)
-    log.debug("split.combined_counts", extra={k: len(v) for k, v in combined.items()})
 
      # 2) Per-class split (test then train)
     summary = []

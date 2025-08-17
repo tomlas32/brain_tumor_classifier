@@ -46,10 +46,10 @@ python -m src.pipeline.fetch --dataset owner/name --cache-dir data
 python -m src.pipeline.fetch --pointer-dir outputs/pointers/my_exp
 
 # Config-first
-python -m src.pipeline.fetch --config configs/fetch.yaml
+python -m src.pipeline.fetch --config src/configs/fetch.yaml
 
 # Config + overrides (flip pointer off)
-python -m src.pipeline.fetch --config configs/fetch.yaml \
+python -m src.pipeline.fetch --config src/configs/fetch.yaml \
   --override write_pointer=false
 
 # Legacy still works (no config)

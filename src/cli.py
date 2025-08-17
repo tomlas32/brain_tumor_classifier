@@ -93,7 +93,7 @@ def fetch(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
-    if dry_run:                            # <-- NEW
+    if dry_run:                            
         argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "fetch", "argv": argv})
@@ -114,6 +114,7 @@ def split(
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., test_frac=0.25 clear_dest=true). Repeatable."),
+    dry_run: bool = False,
 ):
     """
     Re-split pooled images into DATA_DIR/training and DATA_DIR/testing.
@@ -143,6 +144,8 @@ def split(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    if dry_run:                            
+        argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "split", "argv": argv})
 

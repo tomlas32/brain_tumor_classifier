@@ -120,6 +120,7 @@ class SplitConfig:
     save_remap_to_project_root: bool = False
     mapping_use_dataset_subdir: bool = False
     mapping_write_split_copy: bool = False
+    dry_run: bool = False  # for testing
 
 
 @dataclass
@@ -613,6 +614,7 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
         save_remap_to_project_root=bool(base.get("save_remap_to_project_root", False)),
         mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
         mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
+        dry_run=bool(base.get("dry_run", False)),
     )
 
 
