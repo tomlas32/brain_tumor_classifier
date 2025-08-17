@@ -12,14 +12,6 @@ import typer
 from typing import Optional, List
 from pathlib import Path
 
-from src.pipeline import fetch as fetch_mod
-from src.pipeline import split as split_mod
-from src.pipeline import resize as resize_mod
-from src.pipeline import validate as validate_mod
-from src.pipeline import train as train_mod
-from src.pipeline import evaluate as evaluate_mod
-from src.pipeline.orchestrator import run_pipeline
-
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.parser_utils import DEFAULT_EXTS
@@ -82,6 +74,9 @@ def fetch(
     python -m src.cli fetch --pointer-dir /custom/dir
 
     """
+    from src.pipeline import fetch as fetch_mod
+
+
     argv = [
         "--dataset", dataset,
         "--cache-dir", str(cache_dir),
@@ -125,6 +120,9 @@ def split(
     python -m src.cli split --exts webp      # replace defaults with webp
     python -m src.cli split --exts +webp,+gif  # add to defaults
     """
+    from src.pipeline import split as split_mod
+
+
     argv = [
         "--dataset", dataset,
         "--test-frac", str(test_frac),
@@ -176,6 +174,9 @@ def resize(
     python -m src.cli resize --exts all            # accept all file extensions
     python -m src.cli resize --exts +webp,+gif     # add extra extensions to defaults
     """
+    from src.pipeline import resize as resize_mod
+
+
     argv = [
         "--size", str(size),
         "--train-in", str(train_in_dir),
@@ -239,6 +240,10 @@ def validate(
     # Validate a custom directory and mapping file
     python -m src.cli validate --in-dir data/training_resized --index-remap outputs/mappings/my_map.json
     """
+
+    from src.pipeline import validate as validate_mod
+
+
     argv = [
         "--in-dir", str(in_dir),
         "--index-remap", str(index_remap),
@@ -328,6 +333,10 @@ def train(
     # Custom paths
     python -m src.cli train --train-in data/training_resized --out-models models/brain_tumor
     """
+
+    from src.pipeline import train as train_mod
+
+
     argv = [
         "--train-in", str(train_in),
         "--val-frac", str(val_frac),
@@ -415,6 +424,10 @@ def evaluate(
     # Change batch size and workers
     python -m src.cli evaluate --batch-size 128 --num-workers 8
     """
+
+    from src.pipeline import evaluate as evaluate_mod
+
+
     argv = [
         "--eval-in", str(eval_in),
         "--eval-out", str(eval_out),
@@ -491,6 +504,10 @@ def pipeline(
       python -m src.cli pipeline --config configs/pipeline.yaml \
         -o train.aug.rotate_deg=5 -o evaluate.io.top_per_class=10
     """
+
+    from src.pipeline.orchestrator import run_pipeline
+
+
     # Structured dispatch log 
     argv_preview = {
         "config": str(config) if config else None,
