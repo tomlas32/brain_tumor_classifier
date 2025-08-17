@@ -102,6 +102,12 @@ def make_parser_train() -> argparse.ArgumentParser:
                         help="Override config values: key=val (e.g., model.name=resnet50)")
     parser.add_argument("--index-remap", type=Path, default=None,
     help="(Deprecated) Prefer config.data.mapping_path. If provided, overrides config.")
+    parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="Plan only; do not start training or write checkpoints."
+)
+
     return parser
 
 
@@ -131,6 +137,57 @@ def main(argv=None) -> int:
 
     mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
     mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
+
+    # ---- Dry run (plan only) ----
+    if args.dry_run or getattr(cfg, "dry_run", False):
+        train_in = Path(cfg.data.train_in) if cfg.data.train_in else Path(args.train_in) if args.train_in else None
+        mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
+
+        train_exists = train_in.exists() if train_in else False
+        mapping_exists = Path(mapping_path).exists() if mapping_path else False
+
+        # simple per-class counts
+        per_class = {}
+        if train_exists:
+            for d in sorted(p for p in train_in.iterdir() if p.is_dir()):
+                count = sum(1 for q in d.rglob("*") if q.is_file())
+                if count:
+                    per_class[d.name] = count
+        total = sum(per_class.values())
+
+        log.info("dry_run.train.plan", extra={
+            "train_in": str(train_in) if train_in else None,
+            "train_in_exists": train_exists,
+            "mapping_path": str(mapping_path) if mapping_path else None,
+            "mapping_exists": mapping_exists,
+            "image_size": cfg.data.image_size,
+            "batch_size": cfg.data.batch_size,
+            "epochs": cfg.loop.epochs,
+            "model_name": cfg.model.name,
+            "pretrained": cfg.model.pretrained,
+            "lr": cfg.optim.lr,
+            "weight_decay": cfg.optim.weight_decay,
+            "total_files": total,
+            "per_class": per_class,
+        })
+
+        print("\n[DRY-RUN] Train plan")
+        print(f"  train_in:     {train_in if train_in else '<none>'}  ({'exists' if train_exists else 'MISSING'})")
+        print(f"  mapping_path: {mapping_path if mapping_path else '<none>'}  "
+            f"({'exists' if mapping_exists else 'MISSING'})")
+        print(f"  image_size:   {cfg.data.image_size}")
+        print(f"  batch_size:   {cfg.data.batch_size}")
+        print(f"  epochs:       {cfg.loop.epochs}")
+        print(f"  model:        {cfg.model.name} (pretrained={cfg.model.pretrained})")
+        print(f"  lr:           {cfg.optim.lr}   |  weight_decay: {cfg.optim.weight_decay}")
+        if per_class:
+            print("  Per-class counts:")
+            for k in sorted(per_class):
+                print(f"    {k:15s} -> {per_class[k]:5d}")
+        else:
+            print("  Per-class counts: <none>")
+        print("\n[DRY-RUN] No training will be started; no checkpoints will be written.")
+        return 0
 
     if mapping_pointer:
         try:

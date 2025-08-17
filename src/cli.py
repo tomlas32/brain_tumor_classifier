@@ -317,6 +317,7 @@ def train(
     # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    dry_run: bool = False,
 ):
     """
     Train a CNN on the resized training set.
@@ -381,6 +382,8 @@ def train(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    if dry_run:
+        argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "train", "argv": argv})
 

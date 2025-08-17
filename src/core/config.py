@@ -306,6 +306,7 @@ class TrainConfig:
     aug: AugmentConfig = field(default_factory=AugmentConfig)
     callbacks: CallbacksConfig = field(default_factory=CallbacksConfig)
     run_id: Optional[str] = None
+    dry_run: bool = False
 
 
 @dataclass
@@ -531,8 +532,9 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         io=TrainIOConfig(**base.get("io", {})),
         loop=TrainLoopConfig(**base.get("loop", {})),
         aug=AugmentConfig(**base.get("aug", {})),
-        callbacks=callbacks,  # ← NEW
+        callbacks=callbacks, 
         run_id=base.get("run_id"),
+        dry_run=bool(base.get("dry_run", False)),
     )
 
 def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> FetchConfig:
