@@ -83,7 +83,7 @@ Create `~/.kaggle/kaggle.json` with your Kaggle API credentials (chmod 600).
 
 ### 3) Run the full pipeline
 ```bash
-python -m src.cli pipeline --config configs/pipeline.yaml
+python -m src.cli pipeline --config src/configs/pipeline.yaml
 ```
 
 ### 4) Inspect outputs
@@ -101,12 +101,12 @@ Each stage is runnable on its own (use `--config` where available):
 
 ```bash
 python -m src.cli fetch --dataset owner/slug
-python -m src.cli split --config configs/split.yaml
-python -m src.cli resize --config configs/resize.yaml
-python -m src.cli validate --config configs/validate.yaml
-python -m src.cli train --config configs/train.yaml
-python -m src.cli evaluate --config configs/eval.yaml
-python -m src.cli pipeline --config configs/pipeline.yaml
+python -m src.cli split --config src/configs/split.yaml
+python -m src.cli resize --config src/configs/resize.yaml
+python -m src.cli validate --config src/configs/validate.yaml
+python -m src.cli train --config src/configs/train.yaml
+python -m src.cli evaluate --config src/configs/eval.yaml
+python -m src.cli pipeline --config src/configs/pipeline.yaml
 ```
 
 **Common flags**
@@ -177,23 +177,23 @@ Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 an
    ```
 2. **Split** into train/test (reads the **fetch** pointer)  
    ```bash
-   python -m src.cli split --config configs/split.yaml
+   python -m src.cli split --config src/configs/split.yaml
    ```
 3. **Resize** images  
    ```bash
-   python -m src.cli resize --config configs/resize.yaml
+   python -m src.cli resize --config src/configs/resize.yaml
    ```
 4. **Validate** dataset (uses **mapping** pointer or `index_remap.json`)  
    ```bash
-   python -m src.cli validate --config configs/validate.yaml
+   python -m src.cli validate --config src/configs/validate.yaml
    ```
 5. **Train** (uses **mapping** pointer; callbacks active if enabled in config)  
    ```bash
-   python -m src.cli train --config configs/train.yaml
+   python -m src.cli train --config src/configs/train.yaml
    ```
 6. **Evaluate** (uses **mapping** pointer; galleries/Grad-CAM saved via `core/viz.py`)  
    ```bash
-   python -m src.cli evaluate --config configs/eval.yaml
+   python -m src.cli evaluate --config src/configs/eval.yaml
    ```
 
 ---
