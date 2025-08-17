@@ -120,3 +120,45 @@ def render_human(plan: SplitPlan, context: dict) -> str:
     lines.append(f"\n  Totals -> source: {t['source']} | train: {t['train']} | test: {t['test']}")
     lines.append("\n[DRY-RUN] No files will be created, moved, or modified.")
     return "\n".join(lines)
+
+
+def build_empty_plan_context(
+    *,
+    dataset_slug: str,
+    pointer: Path,
+    exts: Sequence[str] | None,
+    test_frac: float,
+    seed: int,
+    clear_dest: bool,
+    out_training: Path,
+    out_testing: Path,
+    mapping_use_dataset_subdir: bool,
+    mapping_write_split_copy: bool,
+    save_remap_to_project_root: bool,
+):
+    """
+    Construct an empty SplitPlan + logging context for dry-runs when no pointer/data exist.
+    Keeps 'what to print/log' centralized in the planner.
+    """
+    plan = SplitPlan(classes=tuple(), total_source=0, total_train=0, total_test=0)
+    # placeholders for display only
+    src_training = Path("<missing>/Training")
+    src_testing  = Path("<missing>/Testing")
+
+    extra = make_log_extra(
+        plan,
+        dataset_slug=dataset_slug,
+        pointer=pointer,
+        src_training=src_training,
+        src_testing=src_testing,
+        exts=exts,
+        test_frac=test_frac,
+        seed=seed,
+        clear_dest=clear_dest,
+        out_training=out_training,
+        out_testing=out_testing,
+        mapping_use_dataset_subdir=mapping_use_dataset_subdir,
+        mapping_write_split_copy=mapping_write_split_copy,
+        save_remap_to_project_root=save_remap_to_project_root,
+    )
+    return plan, extra

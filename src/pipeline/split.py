@@ -220,6 +220,28 @@ def main(argv=None) -> int:
         "mapping_write_split_copy": bool(cfg.mapping_write_split_copy),
     })
 
+
+    # --- DRY-RUN logic (If data and pointers don't exist) ---
+    if (getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False)) and not Path(pointer).exists():
+        from src.pipeline.split_planner import build_empty_plan_context  # local import to avoid cycles
+        plan, extra = build_empty_plan_context(
+            dataset_slug=dataset_slug,
+            pointer=Path(pointer),
+            exts=sorted(exts) if exts else [],
+            test_frac=test_frac,
+            seed=seed,
+            clear_dest=clear_dest,
+            out_training=DATA_DIR / "training",
+            out_testing=DATA_DIR / "testing",
+            mapping_use_dataset_subdir=cfg.mapping_use_dataset_subdir,
+            mapping_write_split_copy=cfg.mapping_write_split_copy,
+            save_remap_to_project_root=save_remap_to_project_root,
+        )
+        log.info("dry_run.split.plan", extra=extra)
+        print(render_human(plan, extra))
+        return 0
+    # --- end DRY RUN ---
+
     try:
         fetch_ptr = read_fetch_pointer(pointer)
     except Exception as e:
@@ -259,7 +281,7 @@ def main(argv=None) -> int:
             combined[cls].extend(paths)
     log.debug("split.combined_counts", extra={k: len(v) for k, v in combined.items()})
 
-    # --- DRY-RUN logic (EARLY EXIT) ---
+    # --- DRY-RUN logic (If data exists) ---
     if getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False):
         plan = plan_split(combined, test_frac=test_frac, seed=seed)
         extra = make_log_extra(
