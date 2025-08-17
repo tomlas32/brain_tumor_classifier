@@ -168,7 +168,7 @@ def run(inputs: EvalRunnerInputs) -> Tuple[float, float, float, float]:
     -------
     (acc, precision_macro, recall_macro, f1_macro)
     """
-    log.info("evaluate.start", extra={"run_id": inputs.run_id, "args": inputs.args_dict})
+    log.info("evaluate.start", extra={"run_id": inputs.run_id, "params": inputs.args_dict})
 
     # Device & transforms
     device = get_device(prefer_cuda=True)

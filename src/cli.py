@@ -410,6 +410,7 @@ def evaluate(
     top_per_class: int = typer.Option(6, help="Items per true class for galleries/Grad-CAM."),
     no_galleries: bool = typer.Option(False, help="Disable plain image galleries."),
     no_gradcam: bool = typer.Option(False, help="Disable Grad-CAM overlays."),
+    dry_run: bool = False, 
 ):
     """
     Evaluate a trained model on the resized test set.
@@ -447,6 +448,7 @@ def evaluate(
         "--num-workers", str(num_workers),
         "--seed", str(seed),
         "--log-level", log_level,
+        
     ]
     if log_file:
         argv += ["--log-file", str(log_file)]
@@ -461,6 +463,8 @@ def evaluate(
         argv += ["--no-galleries"]
     if no_gradcam:
         argv += ["--no-gradcam"]
+    if dry_run:
+        argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "evaluate", "argv": argv})
 

@@ -314,6 +314,7 @@ class EvalConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     io: EvalIOConfig = field(default_factory=EvalIOConfig)
     run_id: Optional[str] = None
+    dry_run: bool = False
 
 @dataclass
 class EnvConfig:
@@ -573,6 +574,7 @@ def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalCo
         model=ModelConfig(**base.get("model", {})),
         io=EvalIOConfig(**base.get("io", {})),
         run_id=base.get("run_id"),
+        dry_run=bool(base.get("dry_run", False)),
     )
 
 def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> SplitConfig:
