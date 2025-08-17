@@ -1,0 +1,87 @@
+# configs/pipeline_minimal.yaml
+# Minimal smoke test config for pipeline orchestration
+
+run_id: bt-smoketest-001
+
+env:
+  seed: 123
+  prefer_cuda: false   # keep CPU for consistency in CI/smoke runs
+  cudnn_deterministic: true
+  cudnn_benchmark: false
+
+log:
+  level: DEBUG
+  file: null
+  json: false
+
+fetch:
+  dataset: sartajbhuvaji/brain-tumor-classification-mri
+  cache_dir: data
+  write_pointer: true
+
+split:
+  dataset: sartajbhuvaji/brain-tumor-classification-mri
+  test_frac: 0.5       # half/half split to reduce size
+  clear_dest: true
+  exts: [".jpg", ".jpeg", ".png"]
+
+resize:
+  in_dir: data/combined_split_simple
+  out_dir: data/training_resized
+  size: 64             # small image size for speed
+  exts: all
+
+validate:
+  in_dir: data/training_resized
+  index_remap: outputs/mappings/latest.json
+  size: 64
+  fail_on: warning
+  warn_low_std: 3.0
+  min_file_bytes: 1024
+  dup_check: false
+
+train:
+  data:
+    image_size: 64
+    train_in: data/training_resized
+    mapping_path: outputs/mappings/latest.json
+    batch_size: 2       # tiny batch
+    num_workers: 0      # keep simple for quick runs
+    val_frac: 0.5
+    seed: 123
+  model:
+    name: resnet18
+    pretrained: false   # no need for weights in smoketest
+  optim:
+    lr: 0.01
+    weight_decay: 0.0
+    step_size: 1
+    gamma: 0.5
+    amp: false
+  io:
+    out_models: models
+    out_summary: outputs/training
+  loop:
+    epochs: 1           # single epoch
+  aug:
+    rotate_deg: 5
+    hflip_prob: 0.0
+    jitter_brightness: 0.0
+    jitter_contrast: 0.0
+
+evaluate:
+  data:
+    image_size: 64
+    eval_in: data/testing_resized
+    mapping_path: outputs/mappings/latest.json
+    batch_size: 2
+    num_workers: 0
+    seed: 123
+  model:
+    name: resnet18
+    weights_path: models/best.pth
+  io:
+    eval_out: outputs/evaluation
+    make_galleries: false
+    make_gradcam: false
+    top_per_class: 1
