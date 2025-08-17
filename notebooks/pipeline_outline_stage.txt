@@ -1,0 +1,117 @@
+✅ Phase 0 — Environment bootstrap
+
+Created core/env.py with:
+
+bootstrap_env(seed=...) → sets Python, NumPy, Torch seeds, and cuDNN flags.
+
+log_env_once() → logs environment info (seed, torch/cuda versions, device).
+
+Updated train.py and evaluate.py to:
+
+Call bootstrap_env(seed=...) early.
+
+Remove scattered set_seed and duplicate env logging.
+
+Centralize reproducibility logic.
+
+✅ Step 1–2 — Config unification for Train/Eval
+
+Created core/config.py with dataclasses (DataConfig, ModelConfig, OptimConfig, TrainConfig, EvalConfig, etc.).
+
+Both train and evaluate now load configs via --config train.yaml / eval.yaml.
+
+CLI overrides (--override key=value) supported.
+
+Removed redundant argparse flags from train.py and evaluate.py.
+
+✅ Step 3–4 — Core extraction
+
+Extracted shared logic:
+
+Transforms → core/transforms.py (builds consistent train/val/test transforms).
+
+Mapping → core/mapping.py (index remap read/verify/reorder).
+
+Metrics → core/metrics.py (accuracy, precision, recall, F1, confusion).
+
+Both train and evaluate now import and reuse these.
+
+Removed duplicated transforms, class mapping, and metric code.
+
+✅ Step 5–6 — Training runner
+
+Introduced train/runner.py:
+
+Encapsulates the training loop (scaler, scheduler, best-F1 tracking, checkpoint).
+
+Returns results + artifact paths.
+
+Slimmed down train.py to:
+
+Parse config → setup logging/env → call Trainer.run(cfg).
+
+Cleaned up leftover variables (best_f1, best_epoch, ckpt_path) into the runner return.
+
+✅ Step 7–8 — Evaluation runner
+
+Introduced evaluate/runner.py:
+
+Handles loading model + weights, running metrics, optional galleries/GradCAM.
+
+Returns results dict + artifact paths.
+
+Slimmed down evaluate.py to:
+
+Parse config → setup logging/env → call Evaluator.run(cfg).
+
+Moved evaluation summary writing into core/artifacts.py.
+
+Optional extras (make_galleries, make_gradcam, top_per_class) now live in EvalIOConfig.
+
+✅ Step 9 — Config-first pipeline
+
+Added cli.py commands for fetch, split, resize, validate, train, evaluate.
+
+Each command now supports --config + --override.
+
+Added cli.dispatch structured logs before handing off to each stage.
+
+✅ Step 10 — Master pipeline orchestration
+
+Extended core/config.py:
+
+Added EnvConfig, LoggingConfig, MasterConfig.
+
+Built build_master_config(yaml, overrides) to merge defaults + YAML + overrides.
+
+Created pipeline/orchestrator.py:
+
+Resolves MasterConfig → writes per-stage sub-YAMLs under outputs/orchestrator/<run_id>/.
+
+Runs stages in order (fetch → split → resize → validate → train → evaluate).
+
+Supports --dry-run, --skip, --resume-from.
+
+Writes run_manifest.json summarizing the run.
+
+Added pipeline command in cli.py that calls run_pipeline(...).
+
+✅ Step 11 — Pipeline configs
+
+Created configs/pipeline.yaml for a full reproducible end-to-end run.
+
+Created configs/pipeline_minimal.yaml for smoke testing (tiny batch, 1 epoch, CPU).
+
+✅ Step 12 — Testing & CI
+
+Wrote tests/test_pipeline_smoke.py:
+
+DRY-RUN test (plan only).
+
+Full-run test with all stages mocked (fast, no IO).
+
+CLI smoke test (typer invocation).
+
+Added optional tests/conftest.py to suppress log spam.
+
+Added pytest.ini / pyproject.toml config for consistent pytest behavior.
