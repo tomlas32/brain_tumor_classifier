@@ -298,9 +298,7 @@ def train(
     pretrained: bool = True,
 
     # config-first controls
-    config: Optional[Path] = typer.Option(
-        None, help="Optional YAML config file (config-first)."
-    ),
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option(
         [], "--override", "-o",
         help="Override config values as key=val (e.g., model.name=resnet50 io.out_models=models/x). "
@@ -394,9 +392,7 @@ def evaluate(
     log_level: str = "INFO",
     log_file: Optional[str] = None,
     # config-first controls
-    config: Optional[Path] = typer.Option(
-        None, help="Optional YAML config file (config-first)."
-    ),
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option(
         [], "--override", "-o",
         help="Override config values as key=val (e.g., io.top_per_class=10 io.make_gradcam=false). "

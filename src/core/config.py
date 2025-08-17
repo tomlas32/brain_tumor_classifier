@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import copy
-import json
 import yaml  # PyYAML
+
+from src.utils.paths import CONFIGS_DIR
 
 # ----------------------- Dataclasses (typed schema) ---------------------------
 
@@ -404,27 +405,50 @@ def _to_nested_dict(obj) -> dict:
     raise TypeError(f"Unsupported config type: {type(obj)}")
 
 
-def load_yaml_config(path: Path) -> dict:
+# src/core/config.py
+from pathlib import Path
+import yaml
+
+# ✅ use your central paths
+from src.utils.paths import PROJECT_ROOT, CONFIGS_DIR  # already defined globally
+# PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# CONFIGS_DIR  = PROJECT_ROOT / "configs"  (from your utils)  ← cited
+
+def load_yaml_config(path: str | Path) -> dict:
     """
-    Load a YAML file into a plain dict, with Windows-friendly path normalization.
-
-    If the given path is rooted (e.g., "\configs\foo.yaml") but does not exist,
-    it is reinterpreted as relative to the current working directory.
+    Load YAML with minimal, reliable resolution:
+    - absolute path
+    - path relative to current working directory
+    - path relative to CONFIGS_DIR (src/configs)
+    Also tolerates Windows forms like "\\configs\\file.yaml" by stripping the root.
     """
-    p = Path(path)
-    try_path = p
+    raw = str(path)
+    p = Path(raw)
 
-    # Windows/Unix safety: handle accidental rooted-but-missing paths like "\configs\..."
-    if not try_path.exists() and (str(p).startswith("\\") or str(p).startswith("/")):
-        rel_try = Path.cwd() / str(p).lstrip("\\/")
-        if rel_try.exists():
-            try_path = rel_try
+    # If the string looks rooted on Win/Unix, reinterpret as relative name
+    if raw.startswith("\\") or raw.startswith("/"):
+        p = Path(raw.lstrip("\\/"))
 
-    with try_path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError("Top-level YAML must be a mapping (dict).")
-    return data
+    candidates = [
+        p if p.is_absolute() else None,
+        Path.cwd() / p,
+        CONFIGS_DIR / p,
+    ]
+
+    for c in filter(None, candidates):
+        if c.exists():
+            with c.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                raise ValueError("Top-level YAML must be a mapping (dict).")
+            return data
+
+    tried = "\n  - " + "\n  - ".join(str(c) for c in filter(None, candidates))
+    raise FileNotFoundError(
+        f"YAML not found for '{path}'. Tried:{tried}\n"
+        f"CWD={Path.cwd()}\nCONFIGS_DIR={CONFIGS_DIR}"
+    )
+
 
 
 def apply_overrides(base: dict, overrides: List[str]) -> dict:

@@ -22,16 +22,15 @@ Version: 1.0
 from pathlib import Path
 import os
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]   # <repo>
+SRC_DIR      = PROJECT_ROOT / "src"                  
 
 DATA_DIR    = Path(os.getenv("DATA_DIR",    PROJECT_ROOT / "data"))
 MODELS_DIR  = Path(os.getenv("MODELS_DIR",  PROJECT_ROOT / "models"))
 OUTPUTS_DIR = Path(os.getenv("OUTPUTS_DIR", PROJECT_ROOT / "outputs"))
-CONFIGS_DIR = PROJECT_ROOT / "configs"
+CONFIGS_DIR = SRC_DIR / "configs"  
 NOTEBOOKS   = PROJECT_ROOT / "notebooks"
 
-# Ensure key dirs exist when imported (optional)
 def ensure_base_dirs():
     for p in (DATA_DIR, MODELS_DIR, OUTPUTS_DIR):
         p.mkdir(parents=True, exist_ok=True)
