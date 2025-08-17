@@ -5,6 +5,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Optional
 
+from torchvision.datasets import ImageFolder
+
 from src.utils.logging_utils import get_logger
 from src.utils.paths import OUTPUTS_DIR
 
@@ -174,3 +176,78 @@ def _mapping_base_dir(dataset: Optional[str], use_dataset_subdir: bool) -> Path:
     base.mkdir(parents=True, exist_ok=True)
     log.debug("mapping.base_dir", extra={"base": str(base)})
     return base
+
+def align_or_warn_for_eval(
+    ds: ImageFolder,
+    mapping_path: Path,
+    *,
+    strict: bool = False,
+) -> List[str]:
+    """
+    Ensure the dataset's class encoding matches the order in index_remap.json.
+
+    Behavior:
+    - If ds.classes == expected -> OK (returns expected).
+    - If same set but different order -> re-map ds.class_to_idx/samples/targets in-place (WARN).
+    - If sets differ -> WARN and return dataset order (or raise if strict=True).
+
+    Returns
+    -------
+    class_names : List[str]
+        Class names in the order to be used for metrics & reports.
+    """
+    # 1) Load expected order from mapping
+    idx_to_class = read_index_remap(mapping_path)
+    expected = expected_classes_from_remap(idx_to_class)  # ordered by index 0..N-1
+
+    ds_classes = list(ds.classes)
+
+    # 2) Exact match: nothing to do
+    if ds_classes == expected:
+        log.debug("mapping.align.ok", extra={"classes": ds_classes})
+        return expected
+
+    # 3) Same set, different order: remap dataset to expected order
+    if set(ds_classes) == set(expected):
+        log.warning("mapping.align.reorder",
+                    extra={"expected": expected, "found": ds_classes})
+
+        # Build new mapping according to expected order
+        new_class_to_idx = {cls: i for i, cls in enumerate(expected)}
+
+        # Rebuild samples & targets to use the new indices
+        new_samples = []
+        new_targets = []
+        for path, _old_target in getattr(ds, "samples", []):
+            cls_name = Path(path).parent.name
+            if cls_name not in new_class_to_idx:
+                # Should not happen because sets matched, but guard anyway
+                log.warning("mapping.align.unknown_class_in_samples",
+                            extra={"class": cls_name, "path": str(path)})
+                continue
+            new_idx = new_class_to_idx[cls_name]
+            new_samples.append((path, new_idx))
+            new_targets.append(new_idx)
+
+        # Apply re-mapping in-place
+        ds.classes = list(expected)
+        ds.class_to_idx = new_class_to_idx
+        ds.samples = new_samples
+        # torchvision keeps a parallel 'targets' list
+        if hasattr(ds, "targets"):
+            ds.targets = new_targets
+
+        log.info("mapping.align.applied",
+                 extra={"num_classes": len(expected), "classes": expected})
+        return expected
+
+    # 4) Sets differ: warn (or raise), continue with dataset order
+    ok, msg = verify_dataset_classes(ds_classes, expected, strict=False)
+    if strict:
+        # raise with a clear message (verify_dataset_classes will build one)
+        raise RuntimeError(msg or "Class mapping mismatch (strict).")
+    else:
+        log.warning("mapping.align.set_mismatch",
+                    extra={"expected": expected, "found": ds_classes})
+        # Proceed with dataset order; downstream will still run
+        return ds_classes
