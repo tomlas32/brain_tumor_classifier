@@ -491,7 +491,7 @@ def pipeline(
       python -m src.cli pipeline --config configs/pipeline.yaml \
         -o train.aug.rotate_deg=5 -o evaluate.io.top_per_class=10
     """
-    # Structured dispatch log (best-practice)
+    # Structured dispatch log 
     argv_preview = {
         "config": str(config) if config else None,
         "override": override,

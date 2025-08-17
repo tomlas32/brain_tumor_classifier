@@ -142,6 +142,7 @@ class FetchConfig:
     cache_dir: Optional[Path] = None
     write_pointer: bool = True
     pointer_dir: Optional[Path] = None
+    dry_run: bool = False  # for testing
 
 @dataclass
 class DataConfig:
@@ -523,6 +524,7 @@ def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> Fetch
         cache_dir=cache_dir,
         write_pointer=bool(base.get("write_pointer", True)),
         pointer_dir=pointer_dir,
+        dry_run=bool(base.get("dry_run", False)),
     )
 
 

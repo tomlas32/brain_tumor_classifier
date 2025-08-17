@@ -27,6 +27,7 @@ CLI arguments
 --pointer-dir PATH  Override destination dir for pointer JSONs.
 --log-level LEVEL   DEBUG|INFO|WARNING|ERROR|CRITICAL (default: INFO).
 --log-file PATH     If set, use a fixed log file; otherwise auto per-script under outputs/logs/.
+--dry-run          Plan only; do not download or write pointers.
 
 Exit codes
 ----------
@@ -97,6 +98,7 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
     parser.add_argument("--override", action="append", default=[],
                         help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). "
                             "Repeat for multiple overrides.")
+    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not download or write pointers.")
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
 
@@ -167,6 +169,23 @@ def main(argv=None) -> int:
     cache_dir = Path(cfg.cache_dir) if cfg.cache_dir else Path(args.cache_dir)
     write_pointer = bool(cfg.write_pointer)
     pointer_dir = cfg.pointer_dir or args.pointer_dir
+
+
+    # --- Stage-level dry-run gate ---
+    if cfg.dry_run or args.dry_run:
+        # Derive the target cache dir KaggleHub would use
+        planned_cache = cache_dir.resolve()
+        log.info("dry_run.fetch.plan", extra={
+            "dataset": dataset,
+            "cache_dir": str(planned_cache),
+            "write_pointer": write_pointer and not args.no_pointer,
+            "pointer_dir": str(pointer_dir) if pointer_dir else "(auto under outputs/pointers/fetch/...)"
+        })
+        print(f"[DRY-RUN] Would download '{dataset}' into: {planned_cache}")
+        if write_pointer and not args.no_pointer:
+            print("[DRY-RUN] Would write: latest.json + history/… in the fetch pointer directory")
+        return 0
+    # --- end dry-run ---
     
     try:
         target = fetch_kaggle(dataset=dataset, cache_dir=cache_dir)
