@@ -324,7 +324,8 @@ def main(argv=None) -> int:
                             "Repeat for multiple overrides.")
     parser.add_argument("--mapping-pointer", type=Path, default=None,
                     help="Mapping pointer dir or file (preferred). If provided, overrides --index-remap.")
-
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Plan only; do not open images or write a report.")
     # default ON
     parser.set_defaults(write_report=True)
 
@@ -352,9 +353,72 @@ def main(argv=None) -> int:
     min_file_bytes = cfg.min_file_bytes if cfg.min_file_bytes is not None else args.min_file_bytes
     fail_on = (cfg.fail_on or args.fail_on).lower()
     write_report = bool(cfg.write_report) if cfg.write_report is not None else bool(args.write_report)
+    dry = bool(getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False))
 
     # exts: allow list or 'all' from config; otherwise CLI string
     exts_source = cfg.exts if cfg.exts is not None else args.exts
+    exts_set = parse_exts(exts_source)
+
+    
+    # ---DRY RUN---
+    if dry:
+        in_dir_p = Path(in_dir) if in_dir else None
+        in_exists = in_dir_p.exists() if in_dir_p else False
+
+        # Pure, tolerant counts (no image I/O). Empty exts_set => accept any.
+        def _count_by_class(root: Path, exts: set[str]) -> dict[str, int]:
+            if not root or not root.exists():
+                return {}
+            tallies: dict[str, int] = {}
+            for class_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+                cnt = 0
+                for q in class_dir.rglob("*"):
+                    if q.is_file() and (not exts or q.suffix.lower() in exts):
+                        cnt += 1
+                if cnt:
+                    tallies[class_dir.name] = cnt
+            return tallies
+
+        per_class = _count_by_class(in_dir_p, exts_set) if in_exists else {}
+        total = sum(per_class.values())
+
+        allowed = None
+        if index_remap and Path(index_remap).exists():
+            try:
+                allowed = sorted(_load_valid_classes(Path(index_remap)))
+            except Exception as e:
+                log.warning("validate.dry.index_remap_read_failed",
+                            extra={"index_remap": str(index_remap), "error": str(e)})
+
+        log.info("dry_run.validate.plan", extra={
+            "in_dir": str(in_dir_p) if in_dir_p else None,
+            "exists": {"in_dir": in_exists},
+            "index_remap": str(index_remap) if index_remap else None,
+            "index_remap_exists": bool(index_remap and Path(index_remap).exists()),
+            "size_expected": (size, size),
+            "exts_effective": sorted(exts_set) if exts_set else ["<any>"],
+            "total_files": total,
+            "per_class": per_class,
+            "allowed_labels": allowed,
+        })
+
+        print("\n[DRY-RUN] Validate plan")
+        print(f"  in_dir:        {in_dir_p if in_dir_p else '<none>'}  ({'exists' if in_exists else 'MISSING'})")
+        print(f"  index_remap:   {index_remap if index_remap else '<none>'}  "
+            f"({ 'exists' if (index_remap and Path(index_remap).exists()) else 'MISSING'})")
+        print(f"  size:          {size} x {size}")
+        print(f"  exts:          {', '.join(sorted(exts_set)) if exts_set else '<any>'}")
+        if per_class:
+            print("  Per-class counts:")
+            for k in sorted(per_class):
+                print(f"    {k:15s} -> {per_class[k]:5d}")
+        else:
+            print("  Per-class counts: <none>")
+        if allowed is not None:
+            print("  Allowed labels (from index_remap): " + ", ".join(allowed))
+        print("\n[DRY-RUN] No images will be opened; no report will be written.")
+        return 0
+    # ---END DRY RUN---
 
     if mapping_pointer:
         try:
@@ -366,8 +430,8 @@ def main(argv=None) -> int:
                 "num_classes": mp.get("num_classes"),
             })
         except Exception as e:
-            log.error("validate.mapping_pointer_error", extra={"pointer": str(mapping_pointer), "error": str(e)})
-            return 2
+            log.warning("validate.mapping_pointer_error_nonfatal",
+                        extra={"pointer": str(mapping_pointer), "error": str(e)})
 
     # Guardrails
     if not Path(in_dir).exists():

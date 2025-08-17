@@ -60,6 +60,7 @@ class ValidateConfig:
     fail_on: str = "error"
     mapping_pointer: Optional[Path] = None 
     write_report: bool = True
+    dry_run: bool = False
 
 
 @dataclass
@@ -657,6 +658,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         "min_file_bytes": 1024,
         "fail_on": "error",
         "write_report": True,
+        "dry_run": False,
     }
     if yaml_path:
         yaml_cfg = load_yaml_config(yaml_path)
@@ -675,6 +677,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         fail_on=str(base.get("fail_on", "error")),
         mapping_pointer=_p(base.get("mapping_pointer")),
         write_report=bool(base.get("write_report", True)),
+        dry_run=bool(base.get("dry_run", False)),
     )
 
 def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:

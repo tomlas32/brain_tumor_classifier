@@ -227,6 +227,7 @@ def validate(
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., size=256 exts=all fail_on=warning). Repeatable."),
+    dry_run: bool = False,
 ):
     """
     Validate the integrity and consistency of the resized dataset before training.
@@ -271,6 +272,8 @@ def validate(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    if dry_run:
+        argv += ["--dry-run"]
 
     log.info("cli.dispatch", extra={"stage": "validate", "argv": argv})
 
