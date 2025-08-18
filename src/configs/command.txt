@@ -12,6 +12,10 @@ python -m src.cli validate --config src/configs/validate.yaml --dry-run
 python -m src.cli evaluate --config src/configs/evaluate.yaml --dry-run
 python -m src.cli train --config src/configs/train.yaml --dry-run
 
+FULL RUN
+- run a single stage 
+python -m src.cli fetch --config src/configs/fetch.yaml
+
 
 FULL END-TO-END
 

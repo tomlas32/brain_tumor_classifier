@@ -40,16 +40,68 @@ Version: 1.1
 """
 
 
-import sys
+import sys, json
 import logging
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
 from typing import Optional
 from src.utils.paths import OUTPUTS_DIR
+from typing import Dict, Any
+
 
 
 DEFAULT_FORMAT = "%(asctime)s %(levelname)s [%(stage)s|%(run_id)s] %(name)s %(message)s"
+DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+
+class SafeExtraFormatter(logging.Formatter):
+    """
+    A formatter that appends any non-standard LogRecord attributes
+    (i.e., those injected via `extra=...`) as a JSON blob after the message.
+
+    - Never raises KeyError when fields are missing.
+    - Uses the base format for the fixed fields (time, level, name, etc.).
+    - Appends ` | extras={...}` only if there are any extras.
+    - Serializes with json.dumps(default=str) to handle Paths, Enums, etc.
+    """
+
+    # Standard LogRecord attributes + your known custom ones (stage, run_id).
+    _standard_keys = {
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName", "process",
+        "processName", "message", "asctime",
+        # custom fields already in your base format:
+        "stage", "run_id",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Let the base class produce the core message first
+        base_msg = super().format(record)
+
+        # Collect extras (anything that's not a standard key)
+        extras: Dict[str, Any] = {}
+        for k, v in record.__dict__.items():
+            if k not in self._standard_keys:
+                # Skip private attrs and obvious internals
+                if k.startswith("_"):
+                    continue
+                extras[k] = v
+
+        if not extras:
+            return base_msg
+
+        # Be robust to non-JSON-serializable values
+        try:
+            extras_json = json.dumps(extras, ensure_ascii=False, default=str)
+        except Exception:
+            # Fallback: very defensive – stringify field by field
+            safe_extras = {k: repr(v) for k, v in extras.items()}
+            extras_json = json.dumps(safe_extras, ensure_ascii=False)
+
+        return f"{base_msg} | extras={extras_json}"
+    
 
 class _ContextFilter(logging.Filter):
     """Injects run_id and stage into every record."""
@@ -110,7 +162,7 @@ def configure_logging(
     root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     root.handlers.clear()
 
-    formatter = logging.Formatter(fmt)
+    formatter = SafeExtraFormatter(fmt)
     context_filter = _ContextFilter(run_id=run_id, stage=stage)
 
     # Console handler
