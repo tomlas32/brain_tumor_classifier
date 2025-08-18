@@ -475,6 +475,47 @@ def evaluate(
     raise typer.Exit(code)
 
 @app.command()
+def cleanup(
+    report: str = typer.Option(
+        "latest",
+        help="Validation report JSON to consume, or 'latest' to use the most recent in outputs/validation_reports/."
+    ),
+    policy: str = typer.Option(
+        "strict",
+        help="Quarantine policy: 'strict' | 'within_class' | 'report_only'"
+    ),
+    why: str = typer.Option(
+        "errors",
+        help="Act on: 'errors' | 'warnings' | 'both'"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        help="Plan only; do not move files."
+    ),
+    log_level: str = "INFO",
+    log_file: Optional[Path] = None,
+):
+    """
+    Quarantine bad files based on a validate.py report (read-only consumer of the report).
+    """
+    from src.pipeline import cleanup as cleanup_mod  # local import to match other commands
+
+    argv = [
+        "--report", report,
+        "--policy", policy,
+        "--why", why,
+        "--log-level", log_level,
+    ]
+    if dry_run:
+        argv += ["--dry-run"]
+    if log_file:
+        argv += ["--log-file", str(log_file)]
+
+    log.info("cli.dispatch", extra={"stage": "cleanup", "argv": argv})
+    code = cleanup_mod.main(argv)
+    raise typer.Exit(code)
+
+@app.command()
 def pipeline(
     # Master config + overrides
     config: Optional[Path] = typer.Option(

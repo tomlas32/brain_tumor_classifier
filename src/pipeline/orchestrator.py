@@ -66,6 +66,7 @@ from src.pipeline import resize as resize_mod
 from src.pipeline import validate as validate_mod
 from src.pipeline import train as train_mod
 from src.pipeline import evaluate as evaluate_mod
+from src.pipeline import cleanup as cleanup_mod
 
 
 log = get_logger(__name__)
@@ -387,6 +388,53 @@ def run_pipeline(
         except Exception as e:
             log.error("orchestrator.stage_exception", extra={"stage": stage, "error": str(e)})
             code = 1
+        
+        # --- Inject cleanup + re-validate after validate ---
+        if stage == "validate":
+            # Use the most recent validation report; act on errors in strict mode
+            cleanup_argv = [
+                "--report", "latest",
+                "--policy", "strict",
+                "--why", "errors",
+                "--log-level", master.log.level,
+            ]
+
+            log.info("cli.dispatch", extra={"stage": "cleanup", "argv": cleanup_argv})
+            try:
+                cleanup_code = int(cleanup_mod.main(cleanup_argv))
+            except SystemExit as e:
+                cleanup_code = int(e.code) if isinstance(e.code, int) else 1
+            except Exception as e:
+                log.error("orchestrator.stage_exception", extra={"stage": "cleanup", "error": str(e)})
+                cleanup_code = 1
+            
+            # --- Consume cleanup_code to decide next steps ---
+            if cleanup_code in (1, 2):
+                # Hard failure: stop the pipeline early with cleanup's code
+                log.error("orchestrator.cleanup_failed", extra={"code": cleanup_code})
+                return cleanup_code  # assuming this function returns an exit code
+
+            if cleanup_code == 3:
+                # No-op: nothing to quarantine
+                log.info("orchestrator.cleanup_noop", extra={"code": cleanup_code})
+            else:
+                # Success: quarantine applied
+                log.info("orchestrator.cleanup_applied", extra={"code": cleanup_code})
+
+            # Re-run validate to ensure the dataset is clean before continuing
+            log.info("cli.dispatch", extra={"stage": "validate(recheck)", "argv": argv})
+            try:
+                reval_code = int(mod.main(argv))  # 'mod' is still the validate module here
+            except SystemExit as e:
+                reval_code = int(e.code) if isinstance(e.code, int) else 1
+            except Exception as e:
+                log.error("orchestrator.stage_exception", extra={"stage": "validate(recheck)", "error": str(e)})
+                reval_code = 1
+
+            # Prefer the re-validation result going forward
+            code = reval_code
+
+
         dt = round(time.time() - t0, 2)
 
         results.append({"stage": stage, "exit_code": code, "duration_sec": dt, "argv": argv})
