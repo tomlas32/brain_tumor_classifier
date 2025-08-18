@@ -31,6 +31,16 @@ OUTPUTS_DIR = Path(os.getenv("OUTPUTS_DIR", PROJECT_ROOT / "outputs"))
 CONFIGS_DIR = SRC_DIR / "configs"  
 NOTEBOOKS   = PROJECT_ROOT / "notebooks"
 
+# --- Canonical subdirectories (shared across stages) ---
+# validation reports are written by `validate` and consumed by `cleanup`:
+VALIDATION_REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
+# (optional but handy) class mappings written by `split` and used by others:
+MAPPINGS_DIR           = OUTPUTS_DIR / "mappings"
+# cleanup own outputs (plan/manifest). Okay to centralize as a path constant:
+CLEANUP_REPORTS_DIR    = OUTPUTS_DIR / "cleanup_reports"
+# quarantine destination root (kept here to avoid hardcoding in multiple places):
+QUARANTINE_ROOT        = DATA_DIR / "quarantine"
+
 def ensure_base_dirs():
     for p in (DATA_DIR, MODELS_DIR, OUTPUTS_DIR):
         p.mkdir(parents=True, exist_ok=True)

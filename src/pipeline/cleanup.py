@@ -1,42 +1,29 @@
-# src/pipeline/cleanup.py
-
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import shutil
-import sys
+# import sys  # ← not used; safe to remove
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple, Iterable, Optional
+from typing import Dict, List, Tuple, Optional  # Iterable not used, remove it
 
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args, add_common_cleanup_args
-from src.utils.paths import DATA_DIR, OUTPUTS_DIR
+from src.utils.paths import (
+    VALIDATION_REPORTS_DIR,
+    CLEANUP_REPORTS_DIR,
+    QUARANTINE_ROOT,
+)
+from src.core.cleanup_policy import (
+    STRICT_ERROR_CODES,
+    NEVER_AUTO_MOVE,
+)
 
 log = get_logger(__name__)
-
-# --- Policies & defaults ------------------------------------------------------
-
-# Error codes we will act on by default under --policy strict
-STRICT_ERROR_CODES = {
-    "UNREADABLE", "READ_FAIL", "STAT_FAIL", "TINY_FILE",
-    "NOT_RGB", "BAD_SIZE", "ALL_BLACK", "ALL_WHITE",
-    "DUPLICATE"
-}
-
-# Codes we never auto-move (contract/mapping issues)
-NEVER_AUTO_MOVE = {"BAD_LABEL"}
-
-DEFAULT_ACT_ON = "errors"            # errors | warnings | both
-DEFAULT_POLICY = "strict"            # strict | within_class | report_only
-
-REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
-CLEANUP_DIR = OUTPUTS_DIR / "cleanup_reports"
-QUARANTINE_ROOT = DATA_DIR / "quarantine"
 
 
 @dataclass(frozen=True)
@@ -57,10 +44,10 @@ def _now_run_id() -> str:
 
 
 def _find_latest_report() -> Path | None:
-    if not REPORTS_DIR.exists():
+    if not VALIDATION_REPORTS_DIR.exists():
         return None
     candidates = sorted(
-        (p for p in REPORTS_DIR.glob("*.json") if p.is_file()),
+        (p for p in VALIDATION_REPORTS_DIR.glob("*.json") if p.is_file()),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -140,9 +127,12 @@ def _should_act_on(kind: str, code: str, policy: str, act_on: str) -> bool:
     return False
 
 
-def _plan_moves(findings: List[Finding],
-                policy: str,
-                act_on: str) -> Tuple[List[Tuple[Path, Path, Finding]], Dict[str, int]]:
+def _plan_moves(
+    findings: List[Finding],
+    policy: str,
+    act_on: str,
+    run_id: str,  # ← accept stable run id
+) -> Tuple[List[Tuple[Path, Path, Finding]], Dict[str, int]]:
     """
     Plan moves based on policy. Returns a list of (src, dst, finding) and counts by code.
     For duplicates, apply special rules depending on policy.
@@ -165,7 +155,7 @@ def _plan_moves(findings: List[Finding],
         subset_dir = f.subset or _derive_subset_label_from_path(src)[0] or "unknown_subset"
         label_dir = f.label or _derive_subset_label_from_path(src)[1] or "unknown_label"
 
-        dst = QUARANTINE_ROOT / os.getenv("RUN_ID", _now_run_id()) / subset_dir / label_dir / src.name
+        dst = QUARANTINE_ROOT / run_id / subset_dir / label_dir / src.name
 
         # Decide if this finding should be acted on
         if not _should_act_on(f.kind, f.code, policy, act_on):
@@ -213,7 +203,8 @@ def _plan_moves(findings: List[Finding],
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Quarantine bad files based on a validate.py report (read-only consumer).")
+    parser = argparse.ArgumentParser(
+        description="Quarantine bad files based on a validate.py report (read-only consumer).")
     parser.add_argument("--override", action="append", default=[],
                         help="Override config values as key=val (e.g., policy=strict why=errors). Repeatable.")
     parser.add_argument("--config", type=Path, default=None,
@@ -244,7 +235,7 @@ def main(argv=None) -> int:
     if report == "latest":
         report_path = _find_latest_report()
         if not report_path:
-            log.error("cleanup.no_reports_found", extra={"reports_dir": str(REPORTS_DIR)})
+            log.error("cleanup.no_reports_found", extra={"reports_dir": str(VALIDATION_REPORTS_DIR)})
             print("❌ No validation reports found. Run validate.py first.")
             return 2
     else:
@@ -285,7 +276,7 @@ def main(argv=None) -> int:
     # else both -> no filter
 
     # Plan moves per policy
-    planned, counts_by_code = _plan_moves(findings, policy=policy, act_on=why)
+    planned, counts_by_code = _plan_moves(findings, policy=policy, act_on=why, run_id=run_id)
 
     total_to_move = len(planned)
     if policy == "report_only" or dry_run:
@@ -298,8 +289,8 @@ def main(argv=None) -> int:
         if total_to_move > 50:
             print(f"    ... and {total_to_move - 50} more")
         # Write a plan file for audit
-        CLEANUP_DIR.mkdir(parents=True, exist_ok=True)
-        plan_out = CLEANUP_DIR / f"cleanup_plan_{run_id}.json"
+        CLEANUP_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        plan_out = CLEANUP_REPORTS_DIR / f"cleanup_plan_{run_id}.json"
         with open(plan_out, "w", encoding="utf-8") as pf:
             json.dump({
                 "run_id": run_id,
@@ -338,8 +329,8 @@ def main(argv=None) -> int:
             log.error("cleanup.move_failed", extra={"from": str(src), "to": str(dst), "error": str(e)})
 
     # Write manifest
-    CLEANUP_DIR.mkdir(parents=True, exist_ok=True)
-    manifest_path = CLEANUP_DIR / f"quarantine_{run_id}_{_now_run_id()}.json"
+    CLEANUP_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_path = CLEANUP_REPORTS_DIR / f"quarantine_{run_id}_{_now_run_id()}.json"
     manifest = {
         "run_id": run_id,
         "source_report": str(report_path),

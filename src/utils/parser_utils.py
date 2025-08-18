@@ -42,6 +42,7 @@ Version: 1.1
 
 import argparse
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR
+from src.core.cleanup_policy import DEFAULT_POLICY, DEFAULT_ACT_ON
 from pathlib import Path
 
 DEFAULT_EXTS = ".png,.jpg,.jpeg,.bmp,.tif,.tiff"
@@ -165,9 +166,31 @@ def add_common_eval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
 
 
 def add_common_cleanup_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser("cleanup")
-    parser.add_argument("--report", type=str, default="latest")
-    parser.add_argument("--policy", choices=["strict", "within_class", "report_only"], default="strict")
-    parser.add_argument("--why", choices=["errors", "warnings", "both"], default="errors")
-    parser.add_argument("--dry-run", action="store_true")
+    """
+    Extend an existing parser with cleanup-stage arguments.
+    Uses defaults from src.core.cleanup_policy.
+    """
+    parser.add_argument(
+        "--report",
+        type=str,
+        default="latest",
+        help="Path to a validation report JSON, or 'latest' to use most recent under outputs/validation_reports.",
+    )
+    parser.add_argument(
+        "--policy",
+        choices=["strict", "within_class", "report_only"],
+        default=DEFAULT_POLICY,
+        help="Quarantine policy.",
+    )
+    parser.add_argument(
+        "--why",
+        choices=["errors", "warnings", "both"],
+        default=DEFAULT_ACT_ON,
+        help="Which severities to act on.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan only; do not move files.",
+    )
     return parser
