@@ -26,9 +26,11 @@ split:
   exts: [".jpg", ".jpeg", ".png"]
 
 resize:
-  in_dir: data/combined_split_simple
-  out_dir: data/training_resized
-  size: 64             # small image size for speed
+  train_in: data/training
+  train_out: data/training_resized
+  test_in: data/testing
+  test_out: data/testing_resized
+  size: 64
   exts: all
 
 validate:

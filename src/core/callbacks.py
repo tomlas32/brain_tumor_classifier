@@ -128,6 +128,11 @@ class CheckpointCallback(Callback):
             self.best = val_f1
             self.best_path = self.out_models / f"best_valF1_{val_f1:.4f}_epoch{epoch}.pth"
             self._save(model.state_dict(), self.best_path)
+
+            # Save standard best model
+            stable_best = self.out_models / "best.pth"
+            self._save(model.state_dict(), stable_best)
+
             write_latest_pointer(
                 {"best_f1": float(val_f1), "epoch": epoch, "path": str(self.best_path)},
                 self.out_models,

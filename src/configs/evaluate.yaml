@@ -8,7 +8,7 @@ data:
   num_workers: 4
 model:
   name: resnet18
-  weights_path: models/best.pth
+  weights_path: models/best.pth  # either set to ... 
 io:
   eval_out: outputs/evaluation
   make_galleries: true

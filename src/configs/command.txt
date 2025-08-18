@@ -1,6 +1,5 @@
 DRY RUN
 
-
 - entire pipeline
 python -m src.cli pipeline --config src/configs/pipeline.yaml --dry-run
 
@@ -8,12 +7,18 @@ python -m src.cli pipeline --config src/configs/pipeline.yaml --dry-run
 python -m src.cli fetch --config "C:\Users\tomla\Documents\Projects\brain_tumor_classifier\src\configs\fetch.yaml" --dry-run
 python -m src.cli fetch --config src/configs/fetch.yaml --dry-run
 python -m src.cli split --config src/configs/split.yaml --dry-run
+python -m src.cli resize --config src/configs/resize.yaml --dry-run
+python -m src.cli validate --config src/configs/validate.yaml --dry-run
+python -m src.cli evaluate --config src/configs/evaluate.yaml --dry-run
+python -m src.cli train --config src/configs/train.yaml --dry-run
 
 
 FULL END-TO-END
+
+- entire pipline with all functions
 python -m src.cli pipeline --config configs/pipeline.yaml
 
-A) This makes the fetch dry-run but run the full pipeline
+- This makes the fetch dry-run but run the full pipeline
 python -m src.cli pipeline --config configs/pipeline.yaml -o fetch.dry_run=true
 
 SKIP EARLY STAGE 
