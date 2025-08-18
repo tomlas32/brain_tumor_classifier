@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Iterable, Optional
 
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args
+from src.utils.parser_utils import add_common_logging_args, add_common_cleanup_args
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR
 
 log = get_logger(__name__)
@@ -214,29 +214,41 @@ def _plan_moves(findings: List[Finding],
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Quarantine bad files based on a validate.py report (read-only consumer).")
-    parser.add_argument("--report", type=str, default="latest",
-                        help="Path to a validation report JSON, or 'latest' to use most recent under outputs/validation_reports.")
-    parser.add_argument("--policy", type=str, choices=["strict", "within_class", "report_only"], default=DEFAULT_POLICY,
-                        help="Quarantine policy. 'strict' moves all selected errors; 'within_class' only dedupes within same subset+label; 'report_only' never moves (plan only).")
-    parser.add_argument("--why", type=str, choices=["errors", "warnings", "both"], default=DEFAULT_ACT_ON,
-                        help="Which severities to act on.")
-    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not move files.")
+    parser.add_argument("--override", action="append", default=[],
+                        help="Override config values as key=val (e.g., policy=strict why=errors). Repeatable.")
+    parser.add_argument("--config", type=Path, default=None,
+                        help="Optional YAML config file (config-first).")
     add_common_logging_args(parser)  # --log-level, --log-file
+    add_common_cleanup_args(parser)  # --eval-in, --eval-out, --trained-model
     args = parser.parse_args(argv)
 
     # Run-aware logging
     run_id = os.getenv("RUN_ID") or _now_run_id()
     configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="cleanup")
 
+    cfg = None
+    try:
+        from src.core.config import build_cleanup_config, to_dict
+        cfg = build_cleanup_config(args.config, overrides=args.override)
+        log.info("config.resolved", extra={"config": to_dict(cfg)})
+    except Exception:
+        cfg = None  # fallback: no structured config available
+
+    # Merge config → args (config wins when present)
+    report  = getattr(cfg, "report", None)  or args.report
+    policy  = getattr(cfg, "policy", None)  or args.policy
+    why     = getattr(cfg, "why", None)     or args.why
+    dry_run     = bool(getattr(cfg, "dry_run", False) or getattr(args, "dry_run", False))
+
     # Resolve report path
-    if args.report == "latest":
+    if report == "latest":
         report_path = _find_latest_report()
         if not report_path:
             log.error("cleanup.no_reports_found", extra={"reports_dir": str(REPORTS_DIR)})
             print("❌ No validation reports found. Run validate.py first.")
             return 2
     else:
-        report_path = Path(args.report)
+        report_path = Path(report)
         if not report_path.exists():
             log.error("cleanup.report_missing", extra={"report": str(report_path)})
             print(f"❌ Report not found: {report_path}")
@@ -266,18 +278,18 @@ def main(argv=None) -> int:
     ]
 
     # Filter by severity (errors|warnings|both)
-    if args.why == "errors":
+    if why == "errors":
         findings = [f for f in findings if f.kind == "error"]
-    elif args.why == "warnings":
+    elif why == "warnings":
         findings = [f for f in findings if f.kind == "warning"]
     # else both -> no filter
 
     # Plan moves per policy
-    planned, counts_by_code = _plan_moves(findings, policy=args.policy, act_on=args.why)
+    planned, counts_by_code = _plan_moves(findings, policy=policy, act_on=why)
 
     total_to_move = len(planned)
-    if args.policy == "report_only" or args.dry_run:
-        mode = "REPORT-ONLY" if args.policy == "report_only" else "DRY-RUN"
+    if policy == "report_only" or dry_run:
+        mode = "REPORT-ONLY" if policy == "report_only" else "DRY-RUN"
         print(f"[{mode}] Planned moves: {total_to_move}")
         if counts_by_code:
             print("  By code:", dict(counts_by_code))
@@ -292,8 +304,8 @@ def main(argv=None) -> int:
             json.dump({
                 "run_id": run_id,
                 "source_report": str(report_path),
-                "policy": args.policy,
-                "acted_on": args.why,
+                "policy": policy,
+                "acted_on": why,
                 "planned_count": total_to_move,
                 "by_code": dict(counts_by_code),
                 "items": [
@@ -331,8 +343,8 @@ def main(argv=None) -> int:
     manifest = {
         "run_id": run_id,
         "source_report": str(report_path),
-        "policy": args.policy,
-        "acted_on": args.why,
+        "policy": policy,
+        "acted_on": why,
         "moved": moved,
         "skipped": skipped,
         "totals": {

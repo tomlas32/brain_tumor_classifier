@@ -476,29 +476,26 @@ def evaluate(
 
 @app.command()
 def cleanup(
-    report: str = typer.Option(
-        "latest",
-        help="Validation report JSON to consume, or 'latest' to use the most recent in outputs/validation_reports/."
-    ),
-    policy: str = typer.Option(
-        "strict",
-        help="Quarantine policy: 'strict' | 'within_class' | 'report_only'"
-    ),
-    why: str = typer.Option(
-        "errors",
-        help="Act on: 'errors' | 'warnings' | 'both'"
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        help="Plan only; do not move files."
-    ),
+    # runtime knobs (match other commands' style)
+    report: str = "latest",
+    policy: str = "strict",            # strict | within_class | report_only
+    why: str = "errors",               # errors | warnings | both
+    dry_run: bool = False,
+
+    # logging (same names as others)
     log_level: str = "INFO",
-    log_file: Optional[Path] = None,
+    log_file: Optional[str] = None,
+
+    # config‑first support (pass-through, stage resolves YAML)
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: list[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., policy=within_class why=both). Repeatable."),
 ):
     """
-    Quarantine bad files based on a validate.py report (read-only consumer of the report).
+    Quarantine bad files based on a validate.py report.
+    By default, consumes the *latest* report in outputs/validation_reports/.
     """
-    from src.pipeline import cleanup as cleanup_mod  # local import to match other commands
+    from src.pipeline import cleanup as cleanup_mod
 
     argv = [
         "--report", report,
@@ -510,6 +507,10 @@ def cleanup(
         argv += ["--dry-run"]
     if log_file:
         argv += ["--log-file", str(log_file)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
 
     log.info("cli.dispatch", extra={"stage": "cleanup", "argv": argv})
     code = cleanup_mod.main(argv)

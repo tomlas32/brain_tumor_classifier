@@ -149,6 +149,42 @@ class FetchConfig:
     dry_run: bool = False  # for testing
 
 @dataclass
+class CleanupConfig:
+    stage: str = "cleanup"
+    report: str = "latest"
+    policy: str = "strict"       # strict | within_class | report_only
+    why: str = "errors"          # errors | warnings | both
+    dry_run: bool = False
+    log_level: str = "INFO"
+    log_file: Optional[str] = None
+
+def build_cleanup_config(config_file: Path | None, overrides: list[str] | None = None) -> CleanupConfig:
+    """
+    Build a CleanupConfig from a YAML file and optional overrides.
+    Mirrors the pattern used by other build_*_config functions.
+    """
+    raw = {}
+    if config_file:
+        raw = load_yaml_config(config_file)
+
+    if overrides:
+        for ov in overrides:
+            if "=" not in ov:
+                continue
+            k, v = ov.split("=", 1)
+            raw[k.strip()] = v.strip()
+
+    return CleanupConfig(
+        stage=raw.get("stage", "cleanup"),
+        report=raw.get("report", "latest"),
+        policy=raw.get("policy", "strict"),
+        why=raw.get("why", "errors"),
+        dry_run=bool(raw.get("dry_run", False)),
+        log_level=raw.get("log_level", "INFO"),
+        log_file=raw.get("log_file"),
+    )
+
+@dataclass
 class DataConfig:
     image_size: int = 224
     train_in: Optional[Path] = None   # training root (class folders)

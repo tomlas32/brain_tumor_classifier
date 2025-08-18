@@ -162,3 +162,12 @@ def add_common_eval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
                         help="Output directory for evaluation (default: outputs/evaluation)")
     parser.add_argument("--trained-model", type=Path)
     return parser
+
+
+def add_common_cleanup_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser("cleanup")
+    parser.add_argument("--report", type=str, default="latest")
+    parser.add_argument("--policy", choices=["strict", "within_class", "report_only"], default="strict")
+    parser.add_argument("--why", choices=["errors", "warnings", "both"], default="errors")
+    parser.add_argument("--dry-run", action="store_true")
+    return parser
