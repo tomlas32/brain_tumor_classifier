@@ -246,8 +246,8 @@ def validate_dataset(
             try:
                 sig = _file_sha1(p)
                 if sig in seen_hashes:
-                    log.warning(f"[DUPLICATE] {p} - Duplicate of {seen_hashes[sig]}")
-                    n_warnings += 1
+                    log.error(f"[DUPLICATE] {p} - Duplicate of {seen_hashes[sig]}")
+                    n_errors += 1
                 else:
                     seen_hashes[sig] = p
             except Exception as e:
