@@ -3,4 +3,4 @@ train_out: data/training_resized
 test_in: data/testing
 test_out: data/testing_resized
 size: 224
-exts: all         # or ['.jpg', '.jpeg', '.png']
+exts: [".jpg", ".jpeg", ".png"]         # or all

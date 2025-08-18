@@ -144,6 +144,8 @@ def validate_dataset(
     - Logs ERROR for fatal issues; WARNING for suspicious-but-usable items.
     - Keeps scanning after errors to surface as many issues as possible.
     """
+    from collections import defaultdict
+    
     t0 = time.time()
 
     in_dir = Path(in_dir)
@@ -160,6 +162,39 @@ def validate_dataset(
     n_warnings = 0
     per_class_counts: Dict[str, int] = {}
     seen_hashes: Dict[str, Path] = {}
+    errors_by_type = defaultdict(int)
+    warnings_by_type = defaultdict(int)
+    findings = []  # list of dicts: one record per flagged file
+    dup_groups = {}  # sha1 -> list[str] (absolute or project-relative paths)
+    subset_name = Path(in_dir).name
+
+    def _record(kind: str, code: str, path: Path, *, label: str | None = None,
+                details: dict | None = None, sha1: str | None = None,
+                duplicate_of: str | None = None):
+        """
+        Append a single structured finding to the report and bump per-type tallies.
+        kind: 'error' | 'warning'
+        code: short tag like BAD_SIZE, UNREADABLE, DUPLICATE, LOW_STD, ...
+        """
+        rec = {
+            "path": str(path),
+            "label": label,
+            "subset": subset_name,   # keep exact tree name, e.g. 'training_resized'
+            "kind": kind,
+            "code": code,
+        }
+        if details:
+            rec["details"] = details
+        if sha1:
+            rec["sha1"] = sha1
+        if duplicate_of:
+            rec["duplicate_of"] = str(duplicate_of)
+        findings.append(rec)
+
+        if kind == "error":
+            errors_by_type[code] += 1
+        else:
+            warnings_by_type[code] += 1
 
     log.info("validate.start", extra={
         "in_dir": str(in_dir),
@@ -180,6 +215,10 @@ def validate_dataset(
         if exts_set and p.suffix.lower() not in exts_set:
             log.error(f"[BAD_EXT] {p} - Extension {p.suffix.lower()} not in {sorted(exts_set)}")
             n_errors += 1
+            _record(
+                "error", "BAD_EXT", p, label=p.parent.name,
+                details={"ext": p.suffix.lower(), "allowed": sorted(exts_set)}
+            )
             continue
 
         # Label from parent folder
@@ -187,6 +226,10 @@ def validate_dataset(
         if label not in allowed_labels:
             log.error(f"[BAD_LABEL] {p} - Folder '{label}' not in allowed classes {sorted(allowed_labels)}")
             n_errors += 1  # continue checks to surface more issues
+            _record(
+                "error", "BAD_LABEL", p, label=label,
+                details={"allowed": sorted(allowed_labels)}
+            )
 
         # File size sanity
         try:
@@ -194,9 +237,17 @@ def validate_dataset(
             if nbytes < min_file_bytes:
                 log.warning(f"[TINY_FILE] {p} - {nbytes} bytes")
                 n_warnings += 1
+                _record(
+                    "warning", "TINY_FILE", p, label=label,
+                    details={"bytes": int(nbytes), "min_bytes": int(min_file_bytes)}
+                )
         except Exception as e:
             log.warning(f"[STAT_FAIL] {p} - Could not stat file: {e}")
             n_warnings += 1
+            _record(
+                "warning", "STAT_FAIL", p, label=label,
+                details={"error": str(e)}
+            )
 
         # Read & verify image
         try:
@@ -210,49 +261,72 @@ def validate_dataset(
         except UnidentifiedImageError:
             log.error(f"[UNREADABLE] {p} - PIL cannot identify image")
             n_errors += 1
+            _record("error", "UNREADABLE", p, label=label)
             continue
         except Exception as e:
             log.error(f"[READ_FAIL] {p} - Failed to read: {e}")
             n_errors += 1
+            _record("error", "READ_FAIL", p, label=label, details={"error": str(e)})
             continue
 
         # Mode check (should be RGB post-resize)
         if actual_mode != "RGB":
             log.error(f"[NOT_RGB] {p} - Mode={actual_mode}")
             n_errors += 1
+            _record(
+                "error", "NOT_RGB", p, label=label,
+                details={"mode": actual_mode}
+            )
 
         # Size check
         if actual_size != size_expected:
             log.error(f"[BAD_SIZE] {p} - Got {actual_size}, expected {size_expected}")
             n_errors += 1
+            _record(
+                "error", "BAD_SIZE", p, label=label,
+                details={"got": list(actual_size), "expected": list(size_expected)}
+            )
 
         # All black/white detection
         flat = _is_all_black_or_white(arr)
         if flat == "BLACK":
             log.error(f"[ALL_BLACK] {p} - All pixels are zero")
             n_errors += 1
+            _record("error", "ALL_BLACK", p, label=label)
         elif flat == "WHITE":
             log.error(f"[ALL_WHITE] {p} - All pixels are 255")
             n_errors += 1
+            _record("error", "ALL_WHITE", p, label=label)
 
         # Low-variance (very low contrast) warning
         std_val = float(arr.std())
         if std_val < warn_low_std:
             log.warning(f"[LOW_STD] {p} - std={std_val:.3f} < {warn_low_std}")
             n_warnings += 1
+            _record(
+                "warning", "LOW_STD", p, label=label,
+                details={"std": round(std_val, 6), "threshold": float(warn_low_std)}
+            )
 
         # Duplicate detection (optional)
         if dup_check:
             try:
                 sig = _file_sha1(p)
                 if sig in seen_hashes:
-                    log.error(f"[DUPLICATE] {p} - Duplicate of {seen_hashes[sig]}")
+                    first = seen_hashes[sig]
+                    log.error(f"[DUPLICATE] {p} - Duplicate of {first}")
                     n_errors += 1
+                    _record("error", "DUPLICATE", p, label=label, sha1=sig, duplicate_of=str(first))
+                    # Build compact groups
+                    dup_groups.setdefault(sig, [str(first)])
+                    if str(p) not in dup_groups[sig]:
+                        dup_groups[sig].append(str(p))
                 else:
                     seen_hashes[sig] = p
             except Exception as e:
                 log.warning(f"[HASH_FAIL] {p} - SHA1 failed: {e}")
                 n_warnings += 1
+                _record("warning", "HASH_FAIL", p, label=label, details={"error": str(e)})
 
         per_class_counts[label] = per_class_counts.get(label, 0) + 1
 
@@ -284,8 +358,19 @@ def validate_dataset(
         "ok": n_images_ok,
         "errors": n_errors,
         "warnings": n_warnings,
+        # --- NEW: per-type tallies ---
+        "errors_by_type": dict(errors_by_type),
+        "warnings_by_type": dict(warnings_by_type),
+        # existing per-class counts and timing
         "per_class_counts": per_class_counts,
         "elapsed_sec": elapsed,
+        # --- NEW: flat findings list for cleanup/quarantine stage ---
+        # each item: {path, label, subset, kind, code, [details], [sha1], [duplicate_of]}
+        "findings": findings,
+        # --- NEW: convenience duplicate grouping (only hashes with >=2 paths) ---
+        "duplicate_groups": (
+            [{"sha1": k, "paths": v} for k, v in dup_groups.items()] if dup_groups else []
+        ),
     }
 
 
@@ -468,6 +553,12 @@ def main(argv=None) -> int:
         f"Errors: {summary['errors']} | "
         f"Warnings: {summary['warnings']}"
     )
+
+    if summary.get("errors_by_type"):
+        print("  Errors by type:", {k: summary["errors_by_type"][k] for k in sorted(summary["errors_by_type"])})
+    if summary.get("warnings_by_type"):
+        print("  Warnings by type:", {k: summary["warnings_by_type"][k] for k in sorted(summary["warnings_by_type"])})
+
 
     if fail_on == "error" and summary["errors"] > 0:
         return 1

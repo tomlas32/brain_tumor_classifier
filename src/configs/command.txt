@@ -15,6 +15,9 @@ python -m src.cli train --config src/configs/train.yaml --dry-run
 FULL RUN
 - run a single stage 
 python -m src.cli fetch --config src/configs/fetch.yaml
+python -m src.cli split --config src/configs/split.yaml
+python -m src.cli resize --config src/configs/resize.yaml
+python -m src.cli validate --config src/configs/validate.yaml
 
 
 FULL END-TO-END
