@@ -141,9 +141,11 @@ def main(argv=None) -> int:
     # ---- Dry run (plan only) ----
     if args.dry_run or getattr(cfg, "dry_run", False):
         train_in = Path(cfg.data.train_in) if cfg.data.train_in else Path(args.train_in) if args.train_in else None
+        val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None 
         mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
 
         train_exists = train_in.exists() if train_in else False
+        val_exists = val_in.exists() if val_in else False
         mapping_exists = Path(mapping_path).exists() if mapping_path else False
 
         # simple per-class counts
@@ -155,9 +157,18 @@ def main(argv=None) -> int:
                     per_class[d.name] = count
         total = sum(per_class.values())
 
+        per_class_val = {}  
+        if val_exists:     
+            for d in sorted(p for p in val_in.iterdir() if p.is_dir()):
+                count = sum(1 for q in d.rglob("*") if q.is_file())
+                if count:
+                    per_class_val[d.name] = count
+
         log.info("dry_run.train.plan", extra={
             "train_in": str(train_in) if train_in else None,
             "train_in_exists": train_exists,
+            "val_in": str(val_in) if val_in else None,
+            "val_in_exists": val_exists,     
             "mapping_path": str(mapping_path) if mapping_path else None,
             "mapping_exists": mapping_exists,
             "image_size": cfg.data.image_size,
@@ -169,10 +180,12 @@ def main(argv=None) -> int:
             "weight_decay": cfg.optim.weight_decay,
             "total_files": total,
             "per_class": per_class,
+            "per_class_val": per_class_val,
         })
 
         print("\n[DRY-RUN] Train plan")
         print(f"  train_in:     {train_in if train_in else '<none>'}  ({'exists' if train_exists else 'MISSING'})")
+        print(f"  val_in:       {val_in if val_in else '<none>'}  ({'exists' if val_exists else 'MISSING'})")
         print(f"  mapping_path: {mapping_path if mapping_path else '<none>'}  "
             f"({'exists' if mapping_exists else 'MISSING'})")
         print(f"  image_size:   {cfg.data.image_size}")
@@ -180,12 +193,19 @@ def main(argv=None) -> int:
         print(f"  epochs:       {cfg.loop.epochs}")
         print(f"  model:        {cfg.model.name} (pretrained={cfg.model.pretrained})")
         print(f"  lr:           {cfg.optim.lr}   |  weight_decay: {cfg.optim.weight_decay}")
+        
         if per_class:
             print("  Per-class counts:")
             for k in sorted(per_class):
                 print(f"    {k:15s} -> {per_class[k]:5d}")
         else:
             print("  Per-class counts: <none>")
+
+        if per_class_val: 
+            print("  Per-class counts (val):") 
+            for k in sorted(per_class_val):     
+                print(f"    {k:15s} -> {per_class_val[k]:5d}") 
+
         print("\n[DRY-RUN] No training will be started; no checkpoints will be written.")
         return 0
 
@@ -205,14 +225,19 @@ def main(argv=None) -> int:
     if not mapping_path:
         log.error("train.mapping_missing", extra={"hint": "Provide data.mapping_pointer or data.mapping_path"})
         return 2
+    
+    # Prefer pre-split validation set when provided; otherwise use val_frac
+    val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None
+    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
 
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
         image_size=cfg.data.image_size,
         train_in=Path(cfg.data.train_in) if cfg.data.train_in else args.train_in,
+        val_in=val_in,  
         batch_size=cfg.data.batch_size,
         num_workers=cfg.data.num_workers,
-        val_frac=cfg.data.val_frac,
+        val_frac=val_frac_effective,
         seed=cfg.data.seed,
         model_name=cfg.model.name,
         pretrained=cfg.model.pretrained,

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import copy
 import math
@@ -79,6 +79,10 @@ class TrainRunnerInputs:
         Target square size after offline resize/pad (e.g., 224).
     train_in : Path
         Root directory with class subfolders for training/validation split.
+    val_in : Path | None
+        Optional root with class subfolders for validation. If provided, this
+        is used directly and `val_frac` is ignored. If omitted, a stratified
+        split is created from `train_in` using `val_frac`.
     batch_size : int
         Batch size for DataLoaders.
     num_workers : int
@@ -116,6 +120,7 @@ class TrainRunnerInputs:
     """
     image_size: int
     train_in: Path
+    val_in: Optional[Path] 
     batch_size: int
     num_workers: int
     val_frac: float
@@ -210,27 +215,63 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     idx_to_class = read_index_remap(mapping_path)
     expected_classes = expected_classes_from_remap(idx_to_class)
 
-    # ---- Dataset & class verification
-    full_train = ImageFolder(inputs.train_in, transform=tfs["train"])
-    verify_dataset_classes(full_train.classes, expected_classes, strict=True)
+    
+    # ---- Datasets & loaders
+    if getattr(inputs, "val_in", None):
+        # Use pre-split validation directory; ignore val_frac
+        train_base_ds = ImageFolder(inputs.train_in, transform=tfs["train"])
+        val_ds        = ImageFolder(inputs.val_in,   transform=tfs["val"])
 
-    # Per-class counts (for summary manifest)
-    per_class_counts: Dict[str, int] = {cls: 0 for cls in expected_classes}
-    for _, y in full_train.samples:
-        per_class_counts[expected_classes[y]] += 1
-    empties = [c for c, n in per_class_counts.items() if n == 0]
-    if empties:
-        log.error("class.empty_detected", extra={"empty_classes": empties, "counts": per_class_counts})
-        raise RuntimeError(f"Empty classes found in training data: {empties}")
+        # Strict class verification on BOTH sets
+        verify_dataset_classes(train_base_ds.classes, expected_classes, strict=True)
+        verify_dataset_classes(val_ds.classes,        expected_classes, strict=True)
 
-    # ---- Stratified split; rewrap val with eval transforms
-    train_subset, val_subset_idx = _stratified_split(full_train, inputs.val_frac, inputs.seed)
-    val_full = ImageFolder(inputs.train_in, transform=tfs["val"])
-    val_subset = Subset(val_full, val_subset_idx.indices)
+        # Per-class counts from TRAIN set only (for manifest)
+        per_class_counts: Dict[str, int] = {cls: 0 for cls in expected_classes}
+        for _, y in train_base_ds.samples:
+            per_class_counts[expected_classes[y]] += 1
+        empties = [c for c, n in per_class_counts.items() if n == 0]
+        if empties:
+            log.error("class.empty_detected", extra={"empty_classes": empties, "counts": per_class_counts})
+            raise RuntimeError(f"Empty classes found in training data: {empties}")
 
-    # ---- Loaders (deterministic)
-    train_loader = make_loader(train_subset, inputs.batch_size, shuffle=True,  num_workers=inputs.num_workers, seed=inputs.seed)
-    val_loader   = make_loader(val_subset,   inputs.batch_size, shuffle=False, num_workers=inputs.num_workers, seed=inputs.seed)
+        # Deterministic loaders
+        train_loader = make_loader(train_base_ds, inputs.batch_size, shuffle=True,
+                                num_workers=inputs.num_workers, seed=inputs.seed)
+        val_loader   = make_loader(val_ds,        inputs.batch_size, shuffle=False,
+                                num_workers=inputs.num_workers, seed=inputs.seed)
+
+    else:
+        # Fallback: stratified split within train_in using val_frac
+        full_train = ImageFolder(inputs.train_in, transform=tfs["train"])
+        verify_dataset_classes(full_train.classes, expected_classes, strict=True)
+
+        # Perform stratified split
+        train_subset, val_subset_idx = _stratified_split(full_train, inputs.val_frac, inputs.seed)
+
+        # Per-class counts from the TRAIN SUBSET (not the full set)
+        per_class_counts: Dict[str, int] = {cls: 0 for cls in expected_classes}
+        for i in train_subset.indices:
+            _, y = full_train.samples[i]
+            per_class_counts[expected_classes[y]] += 1
+        empties = [c for c, n in per_class_counts.items() if n == 0]
+        if empties:
+            log.error("class.empty_detected", extra={"empty_classes": empties, "counts": per_class_counts})
+            raise RuntimeError(f"Empty classes found in training subset: {empties}")
+
+        # Wrap val subset with eval transforms
+        val_full   = ImageFolder(inputs.train_in, transform=tfs["val"])
+        val_subset = Subset(val_full, val_subset_idx.indices)
+
+        # Deterministic loaders
+        train_loader = make_loader(train_subset, inputs.batch_size, shuffle=True,
+                                num_workers=inputs.num_workers, seed=inputs.seed)
+        val_loader   = make_loader(val_subset,   inputs.batch_size, shuffle=False,
+                                num_workers=inputs.num_workers, seed=inputs.seed)
+
+        # For later summary fields
+        train_base_ds = full_train
+
 
     # ---- Model
     num_classes = len(expected_classes)
@@ -356,7 +397,7 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         run_id=inputs.run_id,
         args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in inputs.args_dict.items()},
         class_names=expected_classes,
-        class_to_idx=full_train.class_to_idx,
+        class_to_idx=(train_base_ds.class_to_idx if 'train_base_ds' in locals() else full_train.class_to_idx),
         per_class_counts=per_class_counts,
         best_f1=best_f1,
         best_epoch=best_epoch,

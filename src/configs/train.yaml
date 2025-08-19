@@ -1,14 +1,13 @@
 # configs/train.yaml
 run_id: brain-tumor-exp01
 data:
-  train_in: data/training_resized
-  # If this is a directory of pointer files, either switch this to the actual file:
-  # mapping_path: outputs/mappings/latest.json
-  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
+  train_in: data/training
+  val_in: data/validation      # <<< add this
+  val_frac: 0.0                # <<< disable internal split
   image_size: 224
   batch_size: 32
   num_workers: 4
-  val_frac: 0.2
+  mapping_pointer: outputs/pointers/mapping/<owner>/<slug>/latest.json
 
 aug:
   rotate_deg: 15
