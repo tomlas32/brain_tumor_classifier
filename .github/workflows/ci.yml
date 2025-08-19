@@ -16,7 +16,6 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: "1"
-      # canonical roots used by the project
       DATA_DIR: data
       MODELS_DIR: models
       OUTPUTS_DIR: outputs
@@ -28,7 +27,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # Pin 3.10 for widest ML wheel support (esp. older torch pins)
+          python-version: "3.10"
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -41,8 +41,14 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install -U pip wheel setuptools
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install -e .; fi
+          # Use PyTorch CPU wheels if your reqs include torch/torchvision/torchaudio
+          EXTRA_INDEX="--extra-index-url https://download.pytorch.org/whl/cpu"
+          if [ -f requirements-dev.txt ]; then pip install $EXTRA_INDEX -r requirements-dev.txt; fi
+          if [ -f requirements.txt ]; then
+            pip install $EXTRA_INDEX -r requirements.txt
+          else
+            pip install -e .
+          fi
 
       - name: Create expected dirs
         run: |
@@ -51,7 +57,7 @@ jobs:
           echo "MODELS_DIR=$MODELS_DIR"
           echo "OUTPUTS_DIR=$OUTPUTS_DIR"
 
-      # ---- Pipeline CLI sanity (new order, all dry-run so CI doesn't need data) ----
+      # ---- Pipeline CLI sanity (dry-run only) ----
       - name: fetch (dry-run)
         run: |
           python -m src.cli fetch --config src/configs/fetch.yaml --dry-run || true
@@ -62,14 +68,10 @@ jobs:
 
       - name: validate (pre, dry-run)
         run: |
-          # pre-validate runs on data/merged in real runs; dry-run only to exercise CLI
           python -m src.pipeline.validate --config src/configs/validate_pre.yaml --dry-run || true
-
-      # NOTE: cleanup is skipped in CI because it expects a real pre-validate report to exist.
 
       - name: resize (dry-run)
         run: |
-          # canonical mode: MERGED -> PROCESSED
           python -m src.pipeline.resize --config src/configs/resize.yaml --dry-run || true
 
       - name: validate (post, dry-run)
@@ -78,20 +80,16 @@ jobs:
 
       - name: split (dry-run)
         run: |
-          # split from data/processed into training/validation/testing
           python -m src.pipeline.split --config src/configs/split.yaml --dry-run || true
 
       - name: train (dry-run)
         run: |
-          # training should read data/training and data/validation; dry-run prints plan
           python -m src.pipeline.train --config src/configs/train.yaml --dry-run || true
 
       - name: evaluate (dry-run)
         run: |
-          # evaluation should read data/testing and models/best.pth
           python -m src.pipeline.evaluate --config src/configs/evaluate.yaml --dry-run || true
 
-      # ---- Run unit tests last
       - name: Run tests
         run: |
           pytest -q
