@@ -1,18 +1,16 @@
 """
-Resize (and pad) class-structured images produced by the split step.
+Resize (and pad) class-structured images produced by merge/cleanup (pre‑validate).
 
 This script scans per-class folders under training/testing inputs, resizes each
 image to a square of the requested size while preserving aspect ratio, pads with
 black to fill the square, and writes the results into mirrored output folders.
 
 Typical pipeline order:
-    1) fetch.py   → download dataset
-    2) split.py   → create DATA_DIR/training and DATA_DIR/testing
-    3) resize.py  → create DATA_DIR/training_resized and DATA_DIR/testing_resized
+    fetch → merge → validate (pre) → cleanup → resize → validate (post) → split → train → evaluate
 
 Features
 --------
-- Guards to ensure inputs exist and contain images (prevents running before split).
+- Guards to ensure inputs exist and contain images (prevents running before merge/cleanup).
 - Per-class directory traversal with collision-safe writing.
 - Extension handling consistent with `parser_utils` (supports "+ext" and "all").
 - Run-aware, stage-aware logging; DEBUG lines add per-class/process detail.
@@ -66,7 +64,7 @@ import numpy as np
 
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
-from src.utils.paths import DATA_DIR
+from src.utils.paths import DATA_DIR, MERGED_DIR, PROCESSED_DIR
 
 from src.core.config import build_resize_config, to_dict
 
@@ -75,27 +73,27 @@ from src.pipeline.resize_planner import plan_resize, make_log_extra, render_huma
 
 log = get_logger(__name__)
 
-# Default I/O roots
-TRAIN_INPUT = DATA_DIR / "training"
-TEST_INPUT  = DATA_DIR / "testing"
-TRAIN_OUT   = DATA_DIR / "training_resized"
-TEST_OUT    = DATA_DIR / "testing_resized"
+# Default I/O roots (canonical single-store mode)
+TRAIN_INPUT = MERGED_DIR         # data/merged
+TRAIN_OUT   = PROCESSED_DIR      # data/processed
+TEST_INPUT  = None               # optional legacy inputs (kept for back-compat)
+TEST_OUT    = None
 
 def resize_and_pad(img: np.ndarray, size: int = 224) -> np.ndarray:
     """
-    Resize an image while maintaining aspect ratio, then pad to a square (size × size).
+    Resize an image while maintaining aspect ratio, then pad to a square (size x size).
 
     Parameters
     ----------
     img : np.ndarray
-        Input image (H×W×C) as loaded by OpenCV (BGR).
+        Input image (HxWxC) as loaded by OpenCV (BGR).
     size : int, optional
         Target square edge length in pixels (default 224).
 
     Returns
     -------
     np.ndarray
-        A size×size×3 BGR image where the original content is preserved with
+        A sizexsizex3 BGR image where the original content is preserved with
         aspect ratio and black padding fills the remaining area.
 
     Details
@@ -229,11 +227,15 @@ def main(argv=None) -> int:
         - If both exist but no matching images → exit 3.
     4) Processes images and prints a concise human summary to stdout.
     """
-    parser = argparse.ArgumentParser(description="Resize class-structured images (after split).")
-    parser.add_argument("--train-in",  type=Path, default=TRAIN_INPUT, help="Input training root (from split).")
-    parser.add_argument("--train-out", type=Path, default=TRAIN_OUT,   help="Output root for resized training images.")
-    parser.add_argument("--test-in",   type=Path, default=TEST_INPUT,  help="Input testing root (from split).")
-    parser.add_argument("--test-out",  type=Path, default=TEST_OUT,    help="Output root for resized testing images.")
+    parser = argparse.ArgumentParser(description="Resize/pad images to a canonical processed store (after merge/cleanup).")
+    parser.add_argument("--train-in",  type=Path, default=TRAIN_INPUT,
+                        help="Input root (canonical): data/merged by default.")
+    parser.add_argument("--train-out", type=Path, default=TRAIN_OUT,
+                        help="Output root (canonical): data/processed by default.")
+    parser.add_argument("--test-in",   type=Path, default=None,
+                        help="(Optional) legacy testing input root; omitted in canonical flow.")
+    parser.add_argument("--test-out",  type=Path, default=None,
+                        help="(Optional) legacy testing output root; omitted in canonical flow.")
     parser.add_argument("--size", type=int, default=224, help="Output square size in pixels (e.g., 224).")
     parser.add_argument("--config", type=Path, default=None,
                     help="Optional YAML config file for resize (config-first).")
@@ -253,10 +255,11 @@ def main(argv=None) -> int:
     cfg = build_resize_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
-    train_in  = cfg.train_in  or args.train_in
-    train_out = cfg.train_out or args.train_out
-    test_in   = cfg.test_in   or args.test_in
-    test_out  = cfg.test_out  or args.test_out
+    train_in  = cfg.train_in  if cfg.train_in  is not None else args.train_in
+    train_out = cfg.train_out if cfg.train_out is not None else args.train_out
+    test_in   = cfg.test_in   if cfg.test_in   is not None else args.test_in     # may be None
+    test_out  = cfg.test_out  if cfg.test_out  is not None else args.test_out    # may be None
+
     size      = cfg.size if cfg.size is not None else args.size
 
     # exts from config if provided; otherwise from CLI; both parse via parser_utils
@@ -269,7 +272,7 @@ def main(argv=None) -> int:
 
     # Precompute existence and counts (but do not mkdir / write)
     train_exists = Path(train_in).exists()
-    test_exists  = Path(test_in).exists()
+    test_exists  = Path(test_in).exists() if test_in else False
 
     if dry:
         if not train_exists and not test_exists:
@@ -291,28 +294,39 @@ def main(argv=None) -> int:
     # ---DRY RUN END---
 
     # --- Guards: ensure split has produced inputs with images ---
-    train_ct = _count_images(train_in, exts)
-    test_ct  = _count_images(test_in,  exts)
+    train_exists = Path(train_in).exists()
+    test_exists  = Path(test_in).exists() if test_in else False
 
-    if not train_in.exists() and not test_in.exists():
-        log.error("resize.inputs_missing", extra={"train_in": str(train_in), "test_in": str(test_in)})
-        print("❌ Neither training nor testing input directories exist. Run split first.")
+    train_ct = _count_images(train_in, exts) if train_exists else 0
+    test_ct  = _count_images(test_in,  exts) if test_exists  else 0
+
+    if not train_exists and not test_exists:
+        log.error("resize.inputs_missing", extra={"train_in": str(train_in), "test_in": str(test_in) if test_in else None})
+        print("❌ No input directories found. Run MERGE (and CLEANUP) first to populate data/merged.")
         return 2
 
     if train_ct == 0 and test_ct == 0:
         log.error("resize.no_images_found", extra={
-            "train_in": str(train_in), "test_in": str(test_in),
+            "train_in": str(train_in), "test_in": str(test_in) if test_in else None,
             "exts": sorted(exts) or ["<any>"],
         })
-        print("❌ No images found to resize (did you run split? Check extensions with --exts).")
+        print("❌ No images found to resize. Ensure data/merged has class folders (check --exts).")
         return 3
 
     # Create outputs only when we’re sure we have something to do
-    train_out.mkdir(parents=True, exist_ok=True)
-    test_out.mkdir(parents=True, exist_ok=True)
+    if train_ct > 0:
+        Path(train_out).mkdir(parents=True, exist_ok=True)
+    if test_exists and test_out and test_ct > 0:
+        Path(test_out).mkdir(parents=True, exist_ok=True)
 
-    train_found, train_resized = process_images(train_in, train_out, exts, size)
-    test_found,  test_resized  = process_images(test_in,  test_out,  exts, size)
+    train_found = train_resized = 0
+    test_found  = test_resized  = 0
+
+    if train_exists and train_ct > 0:
+        train_found, train_resized = process_images(train_in, train_out, exts, size)
+
+    if test_exists and test_out and test_ct > 0:
+        test_found,  test_resized  = process_images(test_in,  test_out,  exts, size)
 
     total_found   = train_found + test_found
     total_resized = train_resized + test_resized

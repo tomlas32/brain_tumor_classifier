@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Tuple, List, Dict, Mapping
+from typing import Iterable, Tuple, List, Dict, Mapping, Optional
 
 @dataclass(frozen=True)
 class ClassResizePlan:
@@ -49,9 +49,12 @@ def _scan_subset(root_in: Path, root_out: Path, exts: set[str], subset_name: str
         total_will_write=total_will_write,
     )
 
-def plan_resize(train_in: Path, train_out: Path, test_in: Path, test_out: Path, exts: set[str], size: int) -> ResizePlan:
+def plan_resize(train_in: Path, train_out: Path,
+                test_in: Optional[Path], test_out: Optional[Path],
+                exts: set[str], size: int) -> ResizePlan:
     training = _scan_subset(train_in, train_out, exts, "training", size) if train_in.exists() else None
-    testing  = _scan_subset(test_in, test_out, exts, "testing", size) if test_in.exists() else None
+    testing  = _scan_subset(test_in, test_out, exts, "testing", size) if (test_in and test_in.exists()) else None
+
     return ResizePlan(
         size=size,
         exts=tuple(sorted(exts)),
@@ -103,8 +106,10 @@ def render_human(plan: ResizePlan, ctx: dict | None = None) -> str:
     lines.append("\n[DRY-RUN] No directories will be created and no files will be written.")
     return "\n".join(lines)
 
-def build_empty_plan_context(
-    *, train_in: Path, train_out: Path, test_in: Path, test_out: Path, exts: list[str], size: int
+def build_empty_plan_context(*,
+    train_in: Path, train_out: Path,
+    test_in: Optional[Path], test_out: Optional[Path],
+    exts: list[str], size: int
 ) -> tuple[ResizePlan, dict]:
     plan = ResizePlan(size=size, exts=tuple(exts), training=None, testing=None)
     extra = make_log_extra(plan)

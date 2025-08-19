@@ -1,6 +1,8 @@
-train_in: data/training
-train_out: data/training_resized
-test_in: data/testing
-test_out: data/testing_resized
+train_in: data/merged
+train_out: data/processed
+test_in:
+test_out:
 size: 224
-exts: [".jpg", ".jpeg", ".png"]         # or all
+exts: "jpg,jpeg,png"   # or "all"
+dry_run: false
+log_level: "INFO"

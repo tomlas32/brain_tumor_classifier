@@ -1,0 +1,16 @@
+# validate_pre.yaml — run after MERGE, before CLEANUP
+in_dir: data/merged
+index_remap: null          # IMPORTANT: no class order enforcement in pre
+size: 224                  # recorded in report; not enforced in pre
+exts: "jpg,jpeg,png"       # or "all" if you accept any
+dup_check: true            # enable if you want duplicate detection before cleanup
+warn_low_std: 3.0
+min_file_bytes: 1024
+fail_on: "error"
+write_report: true
+dry_run: false
+
+# NEW toggles supported by your updated ValidateConfig
+enforce_size: false        # pre: relaxed, DO NOT enforce WxH
+require_rgb: false         # pre: relaxed, DO NOT enforce RGB mode
+report_tag: "pre"          # makes files end with _pre.json

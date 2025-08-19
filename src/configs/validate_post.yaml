@@ -1,0 +1,16 @@
+# validate_post.yaml — run after RESIZE, before SPLIT
+in_dir: data/processed
+index_remap: null          # mapping is created by split; not enforced here
+size: 224
+exts: "jpg,jpeg,png"       # or "all"
+dup_check: false           # optional post-resize; usually off
+warn_low_std: 3.0
+min_file_bytes: 1024
+fail_on: "error"
+write_report: true
+dry_run: false
+
+# NEW toggles
+enforce_size: true         # post: MUST be 224x224
+require_rgb: true          # post: MUST be RGB
+report_tag: "post"         # makes files end with _post.json

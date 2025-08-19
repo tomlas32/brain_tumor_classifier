@@ -3,7 +3,7 @@ Validate a dataset pre and post processing.
 
 What this script checks
 -----------------------
-1) **Class labels**: each image’s parent folder name must be in `index_remap.json`.
+1) **Class labels**: each image's parent folder name must be in `index_remap.json`.
 2) **Image readability**: file opens with PIL; truncated / unreadable files are errors.
 3) **Mode**: images should be RGB (post-resize standardization).
 4) **Dimensions**: every image must be exactly (size x size).
@@ -21,7 +21,7 @@ Logging & exit codes
 
 Typical pipeline order
 ----------------------
-fetch → split → resize → **validate** → train → evaluate
+fetch → merge → validate (pre) → cleanup → resize → validate (post) → split → train → evaluate.
 
 Examples
 --------
@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 
 from src.utils.logging_utils import get_logger, configure_logging
 from src.utils.parser_utils import parse_exts, add_common_logging_args, DEFAULT_EXTS
-from src.utils.paths import DATA_DIR, OUTPUTS_DIR
+from src.utils.paths import DATA_DIR, OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
 
 from src.core.mapping import read_index_remap, expected_classes_from_remap
 from src.core.config import build_validate_config, to_dict
@@ -103,7 +103,7 @@ def _file_sha1(p: Path) -> str:
 
 
 def validate_dataset(
-    in_dir: str | Path = DATA_DIR / "training_resized",
+    in_dir: str | Path = MERGED_DIR,
     index_remap_path: str | Path | None = OUTPUTS_DIR / "mappings" / "latest.json",
     size: int = 224,
     exts: str = DEFAULT_EXTS,  # parsed by parse_exts()
@@ -336,9 +336,9 @@ def main(argv=None) -> int:
     2) Guardrails: ensure input dir and mapping exist.
     3) Run validation and apply `--fail-on` policy for exit code.
     """
-    parser = argparse.ArgumentParser(description="Validate a resized dataset before training")
-    parser.add_argument("--in-dir", type=Path, default=DATA_DIR / "training_resized",
-                        help="Path to resized dataset directory (e.g., data/training_resized)")
+    parser = argparse.ArgumentParser(description="Validate a dataset (pre or post processing)")
+    parser.add_argument("--in-dir", type=Path, default=None,
+        help="Dataset root to validate. If omitted: uses data/merged for pre or data/processed for post (based on config).")
     parser.add_argument("--index-remap", type=Path, default=OUTPUTS_DIR / "mappings" / "latest.json",
                         help="Path to index_remap.json that defines allowed classes")
     parser.add_argument("--size", type=int, default=224, help="Expected image size (square)")
@@ -387,7 +387,16 @@ def main(argv=None) -> int:
     cfg = build_validate_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
-    in_dir = cfg.in_dir or args.in_dir
+    # choose in_dir: explicit > arg > mode-based default
+    if cfg.in_dir is not None:
+        in_dir = cfg.in_dir
+    elif args.in_dir is not None:
+        in_dir = args.in_dir
+    else:
+        # If strict checks are enabled, assume post-validate → processed; else pre → merged
+        strict = bool(getattr(cfg, "enforce_size", True) and getattr(cfg, "require_rgb", True))
+        in_dir = PROCESSED_DIR if strict else MERGED_DIR
+        
     mapping_pointer = cfg.mapping_pointer or args.mapping_pointer
     index_remap = cfg.index_remap or args.index_remap
     size = cfg.size if cfg.size is not None else args.size

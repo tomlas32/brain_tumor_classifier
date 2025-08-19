@@ -112,7 +112,7 @@ class ValidateConfig:
     dry_run: bool = False
     enforce_size: bool = True
     require_rgb: bool = True
-    phase: Optional[str] = None  # "pre" | "post" | None
+    report_tag: Optional[str] = None  # "pre" | "post" | None
 
 
 @dataclass
@@ -175,6 +175,7 @@ class SplitConfig:
     mapping_use_dataset_subdir: bool = False
     mapping_write_split_copy: bool = False
     dry_run: bool = False  # for testing
+    val_frac: float = 0.10
 
 
 @dataclass
@@ -680,6 +681,7 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
         "dataset": None,
         "pointer": None,
         "test_frac": 0.20,
+        "val_frac": 0.10,
         "seed": 42,
         "clear_dest": False,
         "exts": None,
@@ -699,6 +701,7 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
         dataset=base.get("dataset"),
         pointer=pointer,
         test_frac=float(base.get("test_frac", 0.20)),
+        val_frac=float(base.get("val_frac", 0.10)),
         seed=int(base.get("seed", 42)),
         clear_dest=bool(base.get("clear_dest", False)),
         exts=base.get("exts"),
@@ -756,7 +759,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         "dry_run": False,
         "enforce_size": True,
         "require_rgb": True,
-        "phase": None,
+        "report_tag": None,
     }
 
     if yaml_path:
@@ -780,7 +783,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         dry_run=bool(base.get("dry_run", False)),
         enforce_size=bool(base.get("enforce_size", True)),
         require_rgb=bool(base.get("require_rgb", True)),
-        phase=base.get("phase"),
+        report_tag=base.get("report_tag"),
     )
 
 def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:

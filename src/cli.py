@@ -12,8 +12,8 @@ import typer
 from typing import Optional, List
 from pathlib import Path
 
-from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, DEFAULT_INDEX_REMAP
-from src.utils.paths import DEFAULT_DATASET
+from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
+from src.utils.paths import DEFAULT_DATASET, DEFAULT_INDEX_REMAP
 from src.utils.parser_utils import DEFAULT_EXTS
 from src.utils.logging_utils import get_logger
 
@@ -153,6 +153,7 @@ def split(
     dataset: str = DEFAULT_DATASET,
     pointer: Optional[Path] = None,
     test_frac: float = 0.20,
+    val_frac: float = 0.10,   # <-- ADD THIS
     seed: int = 42,
     exts: str = DEFAULT_EXTS,
     clear_dest: bool = False,
@@ -160,7 +161,7 @@ def split(
     log_file: Optional[str] = None,
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option([], "--override", "-o",
-        help="Override config values as key=val (e.g., test_frac=0.25 clear_dest=true). Repeatable."),
+        help="Override config values as key=val (e.g., test_frac=0.25 val_frac=0.1 clear_dest=true). Repeatable."),
     dry_run: bool = False,
 ):
     """
@@ -177,10 +178,12 @@ def split(
     argv = [
         "--dataset", dataset,
         "--test-frac", str(test_frac),
+        "--val-frac", str(val_frac),            
         "--seed", str(seed),
         "--exts", exts,
         "--log-level", log_level,
     ]
+
     if pointer:
         argv += ["--pointer", str(pointer)]
     if clear_dest:
@@ -203,10 +206,10 @@ def split(
 @app.command()
 def resize(
     size: int = 224,
-    train_in_dir: Path = DATA_DIR / "training",
-    train_out_dir: Path = DATA_DIR / "training_resized",
-    test_in_dir: Path = DATA_DIR / "testing",
-    test_out_dir: Path = DATA_DIR / "testing_resized",
+    train_in_dir: Path = MERGED_DIR,       # data/merged
+    train_out_dir: Path = PROCESSED_DIR,   # data/processed
+    test_in_dir: Optional[Path] = None,    # legacy optional
+    test_out_dir: Optional[Path] = None,   # legacy optional
     exts: str = DEFAULT_EXTS,
     log_level: str = "INFO",
     log_file: Optional[str] = None,
@@ -235,12 +238,12 @@ def resize(
         "--size", str(size),
         "--train-in", str(train_in_dir),
         "--train-out", str(train_out_dir),
-        "--test-in", str(test_in_dir),
-        "--test-out", str(test_out_dir),
         "--exts", exts,
         "--log-level", log_level,
     ]
 
+    if test_in_dir:  argv += ["--test-in", str(test_in_dir)]
+    if test_out_dir: argv += ["--test-out", str(test_out_dir)]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
@@ -258,8 +261,8 @@ def resize(
 
 @app.command()
 def validate(
-    in_dir: Path = DATA_DIR / "training",
-    index_remap: Path = DEFAULT_INDEX_REMAP,  # outputs/mappings/latest.json
+    in_dir: Optional[Path] = None,
+    index_remap: Optional[Path] = None,
     size: int = 224,
     exts: str = typer.Option(
         DEFAULT_EXTS,
@@ -302,8 +305,6 @@ def validate(
 
 
     argv = [
-        "--in-dir", str(in_dir),
-        "--index-remap", str(index_remap),
         "--size", str(size),
         "--exts", exts,
         "--warn-low-std", str(warn_low_std),
@@ -321,6 +322,10 @@ def validate(
         argv += ["--override", ov]
     if dry_run:
         argv += ["--dry-run"]
+    if in_dir is not None:
+        argv += ["--in-dir", str(in_dir)]
+    if index_remap is not None:
+        argv += ["--index-remap", str(index_remap)]
 
     log.info("cli.dispatch", extra={"stage": "validate", "argv": argv})
 
@@ -330,7 +335,7 @@ def validate(
 @app.command()
 def train(
     # I/O
-    train_in: Path = DATA_DIR / "training_resized",
+    train_in: Path = DATA_DIR / "training",
     out_models: Path = MODELS_DIR,
     out_summary: Path = OUTPUTS_DIR / "training",
 
@@ -439,7 +444,7 @@ def train(
 
 @app.command()
 def evaluate(
-    eval_in: Path = DATA_DIR / "testing_resized",
+    eval_in: Path = DATA_DIR / "testing",
     eval_out: Path = OUTPUTS_DIR / "evaluation",
     trained_model: Path = MODELS_DIR / "best_model.pth",
     model: str = "resnet18",  # resnet18 | resnet34 | resnet50

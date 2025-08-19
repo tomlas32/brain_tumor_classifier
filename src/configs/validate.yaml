@@ -1,9 +1,0 @@
-mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
-in_dir: data/testing_resized
-size: 224
-exts: all
-dup_check: true
-warn_low_std: 3.0
-min_file_bytes: 1024
-fail_on: warning
-write_report: true

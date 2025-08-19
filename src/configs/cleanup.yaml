@@ -1,19 +1,9 @@
-# src/configs/cleanup.yaml
-
-stage: cleanup
-
-# Which validation report to consume
-report: latest   # or a path: outputs/validation_reports/validate_training_20250818.json
-
-# Quarantine policy: strict | within_class | report_only
-policy: strict
-
-# Which severities to act on: errors | warnings | both
-why: errors
-
-# Plan only (no moves)? true | false
+# cleanup.yaml
+report: "latest"           
+report_tag: "pre"          
+policy: "strict"           
+why: "errors"              
 dry_run: false
+log_level: "INFO"
+log_file:
 
-# Logging
-log_level: INFO
-log_file: null
