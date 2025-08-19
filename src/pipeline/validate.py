@@ -1,5 +1,5 @@
 """
-Validate a *resized* dataset directory tree after the `resize` step.
+Validate a dataset pre and post processing.
 
 What this script checks
 -----------------------
@@ -104,57 +104,37 @@ def _file_sha1(p: Path) -> str:
 
 def validate_dataset(
     in_dir: str | Path = DATA_DIR / "training_resized",
-    index_remap_path: str | Path = OUTPUTS_DIR / "mappings" / "latest.json",
+    index_remap_path: str | Path | None = OUTPUTS_DIR / "mappings" / "latest.json",
     size: int = 224,
     exts: str = DEFAULT_EXTS,  # parsed by parse_exts()
     dup_check: bool = False,
-    warn_low_std: float = 3.0,      # warn if per-image std < this (very low contrast)
-    min_file_bytes: int = 1024,     # warn if file under 1 KB (likely broken)
+    warn_low_std: float = 3.0,
+    min_file_bytes: int = 1024,
+    *,
+    enforce_size: bool = True,    # pre: False, post: True
+    require_rgb: bool = True,     # pre: False, post: True
 ) -> dict:
     """
-    Validate a *resized* dataset directory tree after your resize step.
+    Validate a dataset directory tree.
 
-    Parameters
-    ----------
-    in_dir : Path
-        Root directory to validate (typically data/training_resized or testing_resized).
-    index_remap_path : Path
-        Path to index_remap.json that defines the allowed class names.
-    size : int
-        Expected square dimension (e.g., 224).
-    exts : str
-        Extension argument interpreted by `parse_exts()`:
-          * default list (e.g., .jpg,.jpeg,.png)
-          * '+webp,+gif' to add formats
-          * 'all' to accept any extension (empty-set sentinel)
-    dup_check : bool
-        Enable SHA-1 duplicate detection (warning-level findings).
-    warn_low_std : float
-        Warn if per-image pixel std is below this threshold.
-    min_file_bytes : int
-        Warn if file size is below this many bytes.
-
-    Returns
-    -------
-    dict
-        Summary with counts, per-class tallies, and elapsed seconds.
-
-    Notes
-    -----
-    - Logs ERROR for fatal issues; WARNING for suspicious-but-usable items.
-    - Keeps scanning after errors to surface as many issues as possible.
+    - If index_remap_path is None, BAD_LABEL checks are skipped (pre-validate).
+    - If enforce_size/require_rgb are False, those checks are skipped (pre-validate).
     """
     from collections import defaultdict
-    
     t0 = time.time()
 
     in_dir = Path(in_dir)
-    index_remap_path = Path(index_remap_path)
-    allowed_labels = _load_valid_classes(index_remap_path)
-    size_expected: Tuple[int, int] = (size, size)
 
-    # Normalize extensions once (empty set => accept all)
-    exts_set = parse_exts(exts)  # returns set[str] or empty set for "all"
+    allowed_labels: Set[str] | None = None
+    if index_remap_path is not None:
+        try:
+            allowed_labels = _load_valid_classes(Path(index_remap_path))
+        except Exception as e:
+            # Let guardrails handle if caller insists on a path that doesn't parse
+            raise
+
+    size_expected: Tuple[int, int] = (size, size)
+    exts_set = parse_exts(exts)  # empty set => accept any
 
     n_files_seen = 0
     n_images_ok = 0
@@ -162,39 +142,28 @@ def validate_dataset(
     n_warnings = 0
     per_class_counts: Dict[str, int] = {}
     seen_hashes: Dict[str, Path] = {}
+
     errors_by_type = defaultdict(int)
     warnings_by_type = defaultdict(int)
-    findings = []  # list of dicts: one record per flagged file
-    dup_groups = {}  # sha1 -> list[str] (absolute or project-relative paths)
+    findings = []
+    dup_groups: Dict[str, list[str]] = {}
     subset_name = Path(in_dir).name
 
     def _record(kind: str, code: str, path: Path, *, label: str | None = None,
                 details: dict | None = None, sha1: str | None = None,
                 duplicate_of: str | None = None):
-        """
-        Append a single structured finding to the report and bump per-type tallies.
-        kind: 'error' | 'warning'
-        code: short tag like BAD_SIZE, UNREADABLE, DUPLICATE, LOW_STD, ...
-        """
         rec = {
             "path": str(path),
             "label": label,
-            "subset": subset_name,   # keep exact tree name, e.g. 'training_resized'
+            "subset": subset_name,
             "kind": kind,
             "code": code,
         }
-        if details:
-            rec["details"] = details
-        if sha1:
-            rec["sha1"] = sha1
-        if duplicate_of:
-            rec["duplicate_of"] = str(duplicate_of)
+        if details: rec["details"] = details
+        if sha1: rec["sha1"] = sha1
+        if duplicate_of: rec["duplicate_of"] = str(duplicate_of)
         findings.append(rec)
-
-        if kind == "error":
-            errors_by_type[code] += 1
-        else:
-            warnings_by_type[code] += 1
+        (errors_by_type if kind == "error" else warnings_by_type)[code] += 1
 
     log.info("validate.start", extra={
         "in_dir": str(in_dir),
@@ -203,7 +172,10 @@ def validate_dataset(
         "exts_effective": sorted(exts_set) if exts_set else "ALL",
         "dup_check": dup_check,
         "warn_low_std": warn_low_std,
-        "min_file_bytes": min_file_bytes
+        "min_file_bytes": min_file_bytes,
+        "enforce_size": enforce_size,
+        "require_rgb": require_rgb,
+        "has_allowed_labels": allowed_labels is not None,
     })
 
     for p in in_dir.rglob("*"):
@@ -211,102 +183,87 @@ def validate_dataset(
             continue
         n_files_seen += 1
 
-        # Extension check (skip if 'all' -> exts_set == empty)
+        # Extension filter
         if exts_set and p.suffix.lower() not in exts_set:
-            log.error(f"[BAD_EXT] {p} - Extension {p.suffix.lower()} not in {sorted(exts_set)}")
+            log.error(f"[BAD_EXT] {p} - {p.suffix.lower()} not in {sorted(exts_set)}")
             n_errors += 1
-            _record(
-                "error", "BAD_EXT", p, label=p.parent.name,
-                details={"ext": p.suffix.lower(), "allowed": sorted(exts_set)}
-            )
+            _record("error", "BAD_EXT", p, label=p.parent.name,
+                    details={"ext": p.suffix.lower(), "allowed": sorted(exts_set)})
             continue
 
-        # Label from parent folder
         label = p.parent.name
-        if label not in allowed_labels:
-            log.error(f"[BAD_LABEL] {p} - Folder '{label}' not in allowed classes {sorted(allowed_labels)}")
-            n_errors += 1  # continue checks to surface more issues
-            _record(
-                "error", "BAD_LABEL", p, label=label,
-                details={"allowed": sorted(allowed_labels)}
-            )
 
-        # File size sanity
+        # BAD_LABEL only if we have an allowed set
+        if allowed_labels is not None and label not in allowed_labels:
+            log.error(f"[BAD_LABEL] {p} - '{label}' not in {sorted(allowed_labels)}")
+            n_errors += 1
+            _record("error", "BAD_LABEL", p, label=label,
+                    details={"allowed": sorted(allowed_labels)})
+
+        # Tiny file warning (pre I/O)
         try:
             nbytes = p.stat().st_size
             if nbytes < min_file_bytes:
                 log.warning(f"[TINY_FILE] {p} - {nbytes} bytes")
                 n_warnings += 1
-                _record(
-                    "warning", "TINY_FILE", p, label=label,
-                    details={"bytes": int(nbytes), "min_bytes": int(min_file_bytes)}
-                )
+                _record("warning", "TINY_FILE", p, label=label,
+                        details={"bytes": int(nbytes), "min_bytes": int(min_file_bytes)})
         except Exception as e:
-            log.warning(f"[STAT_FAIL] {p} - Could not stat file: {e}")
+            log.warning(f"[STAT_FAIL] {p} - {e}")
             n_warnings += 1
-            _record(
-                "warning", "STAT_FAIL", p, label=label,
-                details={"error": str(e)}
-            )
+            _record("warning", "STAT_FAIL", p, label=label, details={"error": str(e)})
 
-        # Read & verify image
+        # Read image
         try:
             with Image.open(p) as im:
-                im.verify()  # detect truncation
+                im.verify()
             with Image.open(p) as im:
-                im = im.convert("RGB")  # normalize for analysis/logging
                 actual_mode = im.mode
                 actual_size = im.size
-                arr = np.asarray(im)
+                # For analysis (all-black/white + std), use RGB array
+                arr = np.asarray(im.convert("RGB"))
         except UnidentifiedImageError:
-            log.error(f"[UNREADABLE] {p} - PIL cannot identify image")
+            log.error(f"[UNREADABLE] {p}")
             n_errors += 1
             _record("error", "UNREADABLE", p, label=label)
             continue
         except Exception as e:
-            log.error(f"[READ_FAIL] {p} - Failed to read: {e}")
+            log.error(f"[READ_FAIL] {p} - {e}")
             n_errors += 1
             _record("error", "READ_FAIL", p, label=label, details={"error": str(e)})
             continue
 
-        # Mode check (should be RGB post-resize)
-        if actual_mode != "RGB":
-            log.error(f"[NOT_RGB] {p} - Mode={actual_mode}")
+        # Mode check (optional in pre)
+        if require_rgb and actual_mode != "RGB":
+            log.error(f"[NOT_RGB] {p} - mode={actual_mode}")
             n_errors += 1
-            _record(
-                "error", "NOT_RGB", p, label=label,
-                details={"mode": actual_mode}
-            )
+            _record("error", "NOT_RGB", p, label=label, details={"mode": actual_mode})
 
-        # Size check
-        if actual_size != size_expected:
-            log.error(f"[BAD_SIZE] {p} - Got {actual_size}, expected {size_expected}")
+        # Size check (optional in pre)
+        if enforce_size and actual_size != size_expected:
+            log.error(f"[BAD_SIZE] {p} - {actual_size} != {size_expected}")
             n_errors += 1
-            _record(
-                "error", "BAD_SIZE", p, label=label,
-                details={"got": list(actual_size), "expected": list(size_expected)}
-            )
+            _record("error", "BAD_SIZE", p, label=label,
+                    details={"got": list(actual_size), "expected": list(size_expected)})
 
-        # All black/white detection
+        # All black/white
         flat = _is_all_black_or_white(arr)
         if flat == "BLACK":
-            log.error(f"[ALL_BLACK] {p} - All pixels are zero")
+            log.error(f"[ALL_BLACK] {p}")
             n_errors += 1
             _record("error", "ALL_BLACK", p, label=label)
         elif flat == "WHITE":
-            log.error(f"[ALL_WHITE] {p} - All pixels are 255")
+            log.error(f"[ALL_WHITE] {p}")
             n_errors += 1
             _record("error", "ALL_WHITE", p, label=label)
 
-        # Low-variance (very low contrast) warning
+        # Low variance
         std_val = float(arr.std())
         if std_val < warn_low_std:
             log.warning(f"[LOW_STD] {p} - std={std_val:.3f} < {warn_low_std}")
             n_warnings += 1
-            _record(
-                "warning", "LOW_STD", p, label=label,
-                details={"std": round(std_val, 6), "threshold": float(warn_low_std)}
-            )
+            _record("warning", "LOW_STD", p, label=label,
+                    details={"std": round(std_val, 6), "threshold": float(warn_low_std)})
 
         # Duplicate detection (optional)
         if dup_check:
@@ -314,30 +271,32 @@ def validate_dataset(
                 sig = _file_sha1(p)
                 if sig in seen_hashes:
                     first = seen_hashes[sig]
-                    log.error(f"[DUPLICATE] {p} - Duplicate of {first}")
+                    log.error(f"[DUPLICATE] {p} dup of {first}")
                     n_errors += 1
                     _record("error", "DUPLICATE", p, label=label, sha1=sig, duplicate_of=str(first))
-                    # Build compact groups
                     dup_groups.setdefault(sig, [str(first)])
                     if str(p) not in dup_groups[sig]:
                         dup_groups[sig].append(str(p))
                 else:
                     seen_hashes[sig] = p
             except Exception as e:
-                log.warning(f"[HASH_FAIL] {p} - SHA1 failed: {e}")
+                log.warning(f"[HASH_FAIL] {p} - {e}")
                 n_warnings += 1
                 _record("warning", "HASH_FAIL", p, label=label, details={"error": str(e)})
 
         per_class_counts[label] = per_class_counts.get(label, 0) + 1
 
-        # OK if readable, RGB, expected size, and not all-black/white
-        is_ok = (actual_mode == "RGB" and actual_size == size_expected and flat is None)
-        if is_ok:
+        # OK criteria depend on toggles
+        ok = (
+            (not require_rgb or actual_mode == "RGB") and
+            (not enforce_size or actual_size == size_expected) and
+            flat is None
+        )
+        if ok:
             n_images_ok += 1
 
     elapsed = time.time() - t0
 
-    # Summary
     log.info("validate.summary", extra={
         "in_dir": str(in_dir),
         "elapsed_sec": round(elapsed, 2),
@@ -358,20 +317,16 @@ def validate_dataset(
         "ok": n_images_ok,
         "errors": n_errors,
         "warnings": n_warnings,
-        # --- NEW: per-type tallies ---
         "errors_by_type": dict(errors_by_type),
         "warnings_by_type": dict(warnings_by_type),
-        # existing per-class counts and timing
         "per_class_counts": per_class_counts,
         "elapsed_sec": elapsed,
-        # --- NEW: flat findings list for cleanup/quarantine stage ---
-        # each item: {path, label, subset, kind, code, [details], [sha1], [duplicate_of]}
         "findings": findings,
-        # --- NEW: convenience duplicate grouping (only hashes with >=2 paths) ---
         "duplicate_groups": (
             [{"sha1": k, "paths": v} for k, v in dup_groups.items()] if dup_groups else []
         ),
     }
+
 
 
 def main(argv=None) -> int:
@@ -413,6 +368,9 @@ def main(argv=None) -> int:
                         help="Plan only; do not open images or write a report.")
     # default ON
     parser.set_defaults(write_report=True)
+    parser.add_argument("--report-tag", type=str, default=None,
+                    help="Optional tag to append to report filename, e.g. 'pre' or 'post'.")
+
 
     # shared logging flags: --log-level, --log-file
     add_common_logging_args(parser)
@@ -523,25 +481,30 @@ def main(argv=None) -> int:
         log.error("validate.in_dir_missing", extra={"in_dir": str(in_dir)})
         print(f"--in-dir not found: {in_dir}")
         return 2
-    if not Path(index_remap).exists():
+    if index_remap is not None and not Path(index_remap).exists():
         log.error("validate.index_remap_missing", extra={"index_remap": str(index_remap)})
         print(f"--index-remap not found: {index_remap}")
         return 2
 
     summary = validate_dataset(
         in_dir=in_dir,
-        index_remap_path=index_remap,
+        index_remap_path=index_remap if index_remap else None,
         size=size,
         exts=exts_source,
         dup_check=dup_check,
         warn_low_std=warn_low_std,
         min_file_bytes=min_file_bytes,
+        enforce_size=bool(getattr(cfg, "enforce_size", True)),
+        require_rgb=bool(getattr(cfg, "require_rgb", True)),
     )
 
     if write_report:
         VALIDATION_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        report_tag = getattr(cfg, "report_tag", None) or getattr(args, "report_tag", None)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-        report_path = VALIDATION_REPORTS_DIR / f"validation_{run_id}_{ts}.json"
+        suffix = f"_{report_tag}" if report_tag else ""
+        report_path = VALIDATION_REPORTS_DIR / f"validation_{run_id}_{ts}{suffix}.json"
+        
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
         log.info("validation_report_written", extra={"path": str(report_path)})

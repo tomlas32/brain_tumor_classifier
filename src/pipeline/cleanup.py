@@ -43,15 +43,17 @@ def _now_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
 
 
-def _find_latest_report() -> Path | None:
+def _find_latest_report(tag: str | None = None) -> Path | None:
     if not VALIDATION_REPORTS_DIR.exists():
         return None
+    pattern = f"*_{tag}.json" if tag else "*.json"
     candidates = sorted(
-        (p for p in VALIDATION_REPORTS_DIR.glob("*.json") if p.is_file()),
+        (p for p in VALIDATION_REPORTS_DIR.glob(pattern) if p.is_file()),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     return candidates[0] if candidates else None
+
 
 
 def _load_report(path: Path) -> dict:
@@ -230,12 +232,13 @@ def main(argv=None) -> int:
     policy  = getattr(cfg, "policy", None)  or args.policy
     why     = getattr(cfg, "why", None)     or args.why
     dry_run     = bool(getattr(cfg, "dry_run", False) or getattr(args, "dry_run", False))
-
+    report_tag = getattr(cfg, "report_tag", None) or getattr(args, "report_tag", None)
+    
     # Resolve report path
     if report == "latest":
-        report_path = _find_latest_report()
+        report_path = _find_latest_report(report_tag)
         if not report_path:
-            log.error("cleanup.no_reports_found", extra={"reports_dir": str(VALIDATION_REPORTS_DIR)})
+            log.error("cleanup.no_reports_found", extra={"reports_dir": str(VALIDATION_REPORTS_DIR), "tag": report_tag})
             print("❌ No validation reports found. Run validate.py first.")
             return 2
     else:
@@ -244,6 +247,7 @@ def main(argv=None) -> int:
             log.error("cleanup.report_missing", extra={"report": str(report_path)})
             print(f"❌ Report not found: {report_path}")
             return 2
+
 
     # Load report
     try:

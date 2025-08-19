@@ -193,4 +193,10 @@ def add_common_cleanup_args(parser: argparse.ArgumentParser) -> argparse.Argumen
         action="store_true",
         help="Plan only; do not move files.",
     )
+    parser.add_argument(
+        "--report-tag",
+        choices=["pre", "post"],
+        default=None,
+        help="If --report=latest, prefer a validation report tagged with this suffix (e.g., *_pre.json).",
+    )
     return parser

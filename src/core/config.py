@@ -110,6 +110,9 @@ class ValidateConfig:
     mapping_pointer: Optional[Path] = None 
     write_report: bool = True
     dry_run: bool = False
+    enforce_size: bool = True
+    require_rgb: bool = True
+    phase: Optional[str] = None  # "pre" | "post" | None
 
 
 @dataclass
@@ -206,6 +209,7 @@ class CleanupConfig:
     dry_run: bool = False
     log_level: str = "INFO"
     log_file: Optional[str] = None
+    report_tag: Optional[str] = None
 
 def build_cleanup_config(config_file: Path | None, overrides: list[str] | None = None) -> CleanupConfig:
     """
@@ -231,6 +235,7 @@ def build_cleanup_config(config_file: Path | None, overrides: list[str] | None =
         dry_run=bool(raw.get("dry_run", False)),
         log_level=raw.get("log_level", "INFO"),
         log_file=raw.get("log_file"),
+        report_tag=raw.get("report_tag"),
     )
 
 @dataclass
@@ -749,13 +754,18 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         "fail_on": "error",
         "write_report": True,
         "dry_run": False,
+        "enforce_size": True,
+        "require_rgb": True,
+        "phase": None,
     }
+
     if yaml_path:
         yaml_cfg = load_yaml_config(yaml_path)
         _deep_update(base, yaml_cfg)
     base = apply_overrides(base, overrides)
 
     def _p(x): return Path(x) if x is not None else None
+
     return ValidateConfig(
         in_dir=_p(base.get("in_dir")),
         index_remap=_p(base.get("index_remap")),
@@ -768,6 +778,9 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         mapping_pointer=_p(base.get("mapping_pointer")),
         write_report=bool(base.get("write_report", True)),
         dry_run=bool(base.get("dry_run", False)),
+        enforce_size=bool(base.get("enforce_size", True)),
+        require_rgb=bool(base.get("require_rgb", True)),
+        phase=base.get("phase"),
     )
 
 def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:

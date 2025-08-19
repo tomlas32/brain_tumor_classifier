@@ -1,43 +1,38 @@
 """
-Pipeline orchestrator: run fetch → split → resize → validate → train → evaluate
-from a single MasterConfig, with dry-run/skip/resume controls.
+Pipeline Orchestrator
 
-This module does **not** reimplement any stage logic. It simply:
-  1) Loads a MasterConfig (YAML + overrides).
-  2) Builds a per-stage execution plan.
-  3) Optionally performs a dry-run (plan only).
-  4) Dispatches each stage module's `main(argv)` with `--config` pointing to a
-     temporary, stage-specific YAML file derived from the MasterConfig.
-  5) Records per-stage exit codes and writes a run manifest.
+- Defines the canonical stage order for end-to-end runs:
+    fetch → merge → validate_pre → cleanup → resize → validate_post → split → train → evaluate
 
-Logging (structured)
---------------------
-- 'orchestrator.start'   : run_id, stages, dry_run/skip/resume
-- 'config.resolved'      : resolved MasterConfig (dict)
-- 'orchestrator.plan'    : ordered plan (stage → config file + argv)
-- 'cli.dispatch'         : before each stage call (stage + argv)
-- 'orchestrator.stage_end' : stage, exit_code, duration_sec
-- 'orchestrator.done'    : overall_exit_code, manifest_path
+- Each stage is executed as a standalone module (src/pipeline/<stage>.py),
+  with configs serialized under outputs/configs/<stage>/.
 
-Environment
------------
-- Seeds and env flags are applied once via core.env.bootstrap_env(seed) and logged
-  via core.env.log_env_once().
-- RUN_ID is exported to the process environment for stages that pick it up.
+- Orchestrator responsibilities:
+    • Build a run plan (ordered list of stages with resolved configs).
+    • Write per-stage YAML configs into the run directory.
+    • Dispatch execution by importing the corresponding module and calling main(argv).
+    • Enforce explicit validate/cleanup sequencing:
+         - validate_pre runs on MERGED_DIR (raw pooled data).
+         - cleanup acts on the latest pre-validate report.
+         - resize generates PROCESSED_DIR (canonical 224×224 images).
+         - validate_post confirms processed store is model-ready.
+    • Track artifacts and provenance in run_manifest.json.
 
-Usage
------
-from src.pipeline.orchestrator import run_pipeline
-exit_code = run_pipeline(
-    master_yaml=Path("configs/pipeline.yaml"),
-    overrides=["train.aug.rotate_deg=5"],
-    dry_run=False,
-    skip=["fetch","split"],            # or []
-    resume_from=None,                  # or "resize"
-)
+- DEFAULT_ORDER defines the pipeline sequence. Skipping/resuming stages is supported
+  via CLI options (--skip, --resume).
 
-CLI integration is added in Step 3 via src/cli.py.
+Artifacts produced across stages include:
+    outputs/pointers/fetch/.../latest.json         # fetch pointer
+    outputs/merge/manifest.json                    # merge summary
+    outputs/validation_reports/*_pre.json          # pre-validate
+    outputs/cleanup_reports/*.json                 # cleanup actions
+    outputs/validation_reports/*_post.json         # post-validate
+    outputs/resize/resize_report.json              # resize summary
+    outputs/mappings/.../latest.json               # split index mapping
+    outputs/training/training_summary_*.json       # training logs
+    outputs/evaluation/evaluation_summary_*.json   # evaluation logs
 """
+
 
 from __future__ import annotations
 
@@ -49,7 +44,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.utils.logging_utils import get_logger, configure_logging
-from src.utils.paths import OUTPUTS_DIR
+from src.utils.paths import OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
 
 from src.core.config import (
     MasterConfig,
@@ -61,6 +56,7 @@ from src.core.env import bootstrap_env, log_env_once
 
 # Stage modules (each exposes main(argv))
 from src.pipeline import fetch as fetch_mod
+from src.pipeline import merge as merge_mod
 from src.pipeline import split as split_mod
 from src.pipeline import resize as resize_mod
 from src.pipeline import validate as validate_mod
@@ -71,7 +67,17 @@ from src.pipeline import cleanup as cleanup_mod
 
 log = get_logger(__name__)
 
-DEFAULT_ORDER = ["fetch", "split", "resize", "validate", "train", "evaluate"]
+DEFAULT_ORDER = [
+    "fetch",
+    "merge",
+    "validate_pre",
+    "cleanup",
+    "resize",
+    "validate_post",
+    "split",
+    "train",
+    "evaluate",
+]
 
 VALID_STAGES = set(DEFAULT_ORDER)
 
@@ -195,12 +201,14 @@ def _write_stage_yaml(run_dir: Path, stage: str, block: object) -> Path:
 
 
 def _stage_module(stage: str):
-    """Map stage name → imported module reference (with main(argv))."""
     return {
         "fetch": fetch_mod,
-        "split": split_mod,
+        "merge": merge_mod,         # NEW
+        "validate_pre": validate_mod,
+        "cleanup": cleanup_mod,     # explicit stage now
         "resize": resize_mod,
-        "validate": validate_mod,
+        "validate_post": validate_mod,
+        "split": split_mod,
         "train": train_mod,
         "evaluate": evaluate_mod,
     }[stage]
@@ -240,22 +248,54 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
     if master.evaluate.run_id is None:
         master.evaluate.run_id = run_id  # type: ignore[attr-defined]
 
-    # Serialize sub-configs
+        # Base blocks
+    v_base = to_dict(master.validate) if hasattr(master.validate, "__dataclass_fields__") else dict(master.validate)
+
+    # Pre-validate on merged (no mapping, no RGB/size enforcement)
+    v_pre = dict(v_base)
+    v_pre.update({
+        "in_dir": str(MERGED_DIR),
+        "index_remap": None,
+        "enforce_size": False,
+        "require_rgb": False,
+        "report_tag": "pre",
+        "write_report": True,
+    })
+
+    # Post-validate on processed (strict RGB/size)
+    v_post = dict(v_base)
+    v_post.update({
+        "in_dir": str(PROCESSED_DIR),
+        "index_remap": None,        # still not enforcing class set here
+        "enforce_size": True,
+        "require_rgb": True,
+        "report_tag": "post",
+        "write_report": True,
+    })
+
     cfg_paths = {
         "fetch": _write_stage_yaml(run_dir, "fetch", master.fetch),
-        "split": _write_stage_yaml(run_dir, "split", master.split),
+        "merge": _write_stage_yaml(run_dir, "merge", master.merge),
+        "validate_pre": _write_stage_yaml(run_dir, "validate_pre", v_pre),
+        "cleanup": _write_stage_yaml(run_dir, "cleanup", {"stage": "cleanup"}),
         "resize": _write_stage_yaml(run_dir, "resize", master.resize),
-        "validate": _write_stage_yaml(run_dir, "validate", master.validate),
+        "validate_post": _write_stage_yaml(run_dir, "validate_post", v_post),
+        "split": _write_stage_yaml(run_dir, "split", master.split),
         "train": _write_stage_yaml(run_dir, "train", master.train),
         "evaluate": _write_stage_yaml(run_dir, "evaluate", master.evaluate),
     }
+
 
     plan: List[Dict] = []
     for stage in DEFAULT_ORDER:
         if not _stage_should_run(stage, skip=skip, start_from=resume_from):
             continue
         argv = ["--config", str(cfg_paths[stage])]
+        # >>> Pin cleanup to the PRE-validate report <<<
+        if stage == "cleanup":
+            argv += ["--report", "latest", "--report-tag", "pre"]
         plan.append({"stage": stage, "config_path": cfg_paths[stage], "argv": argv})
+
 
     log.info("orchestrator.plan", extra={
         "run_id": run_id,
@@ -388,51 +428,6 @@ def run_pipeline(
         except Exception as e:
             log.error("orchestrator.stage_exception", extra={"stage": stage, "error": str(e)})
             code = 1
-        
-        # --- Inject cleanup + re-validate after validate ---
-        if stage == "validate":
-            # Use the most recent validation report; act on errors in strict mode
-            cleanup_argv = [
-                "--report", "latest",
-                "--policy", "strict",
-                "--why", "errors",
-                "--log-level", master.log.level,
-            ]
-
-            log.info("cli.dispatch", extra={"stage": "cleanup", "argv": cleanup_argv})
-            try:
-                cleanup_code = int(cleanup_mod.main(cleanup_argv))
-            except SystemExit as e:
-                cleanup_code = int(e.code) if isinstance(e.code, int) else 1
-            except Exception as e:
-                log.error("orchestrator.stage_exception", extra={"stage": "cleanup", "error": str(e)})
-                cleanup_code = 1
-            
-            # --- Consume cleanup_code to decide next steps ---
-            if cleanup_code in (1, 2):
-                # Hard failure: stop the pipeline early with cleanup's code
-                log.error("orchestrator.cleanup_failed", extra={"code": cleanup_code})
-                return cleanup_code  # assuming this function returns an exit code
-
-            if cleanup_code == 3:
-                # No-op: nothing to quarantine
-                log.info("orchestrator.cleanup_noop", extra={"code": cleanup_code})
-            else:
-                # Success: quarantine applied
-                log.info("orchestrator.cleanup_applied", extra={"code": cleanup_code})
-
-            # Re-run validate to ensure the dataset is clean before continuing
-            log.info("cli.dispatch", extra={"stage": "validate(recheck)", "argv": argv})
-            try:
-                reval_code = int(mod.main(argv))  # 'mod' is still the validate module here
-            except SystemExit as e:
-                reval_code = int(e.code) if isinstance(e.code, int) else 1
-            except Exception as e:
-                log.error("orchestrator.stage_exception", extra={"stage": "validate(recheck)", "error": str(e)})
-                reval_code = 1
-
-            # Prefer the re-validation result going forward
-            code = reval_code
 
 
         dt = round(time.time() - t0, 2)

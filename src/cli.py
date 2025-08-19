@@ -537,6 +537,7 @@ def cleanup(
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
     override: list[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., policy=within_class why=both). Repeatable."),
+    report_tag: Optional[str] = None,
 ):
     """
     Quarantine bad files based on a validate.py report.
@@ -558,6 +559,8 @@ def cleanup(
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
+    if report_tag:
+        argv += ["--report-tag", report_tag]
 
     log.info("cli.dispatch", extra={"stage": "cleanup", "argv": argv})
     code = cleanup_mod.main(argv)
@@ -567,7 +570,7 @@ def cleanup(
 def pipeline(
     # Master config + overrides
     config: Optional[Path] = typer.Option(
-        None, help="Master YAML for the full pipeline (fetch→split→resize→validate→train→evaluate)."
+        None, help="Master YAML for the full pipeline (fetch → merge → validate (pre) → cleanup → resize → validate (post) → split → train → evaluate)."
     ),
     override: List[str] = typer.Option(
         [], "--override", "-o",
