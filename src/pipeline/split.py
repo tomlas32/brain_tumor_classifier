@@ -135,6 +135,8 @@ def main(argv=None) -> int:
                         help="Fraction per class for final test set (0-1).")
     parser.add_argument("--val-frac", type=float, default=0.10,
                         help="Fraction per class for validation set (0-1).")
+    parser.add_argument("--balance", choices=["none", "equalize"], default="none",
+                    help="none: keep original class sizes; equalize: cap each class to the smallest class before splitting.")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed.")
     parser.add_argument("--clear-dest", action="store_true",
                         help="Delete existing data/{training,validation,testing} before writing.")
@@ -181,10 +183,17 @@ def main(argv=None) -> int:
     src_map = gather_by_class(src_root, exts)
     for cls, paths in src_map.items():
         combined[cls].extend(paths)
+    
+    balance = args.balance  # config-first not needed; single flag is fine here
+    cap_per_class = None
+    if balance == "equalize":
+        # compute the minimum class size across all classes (unique file paths per class)
+        cap_per_class = min(len({str(p) for p in paths}) for paths in combined.values() if paths)
+        log.info("split.equalize_cap", extra={"cap_per_class": cap_per_class})
 
     # DRY-RUN (data exists)
     if getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False):
-        plan = plan_split(combined, test_frac=test_frac, val_frac=val_frac, seed=seed)
+        plan = plan_split(combined, test_frac=test_frac, val_frac=val_frac, seed=seed, balance=balance)
         extra = make_log_extra(
             plan,
             dataset_slug=dataset_slug,
@@ -194,6 +203,7 @@ def main(argv=None) -> int:
             exts=args.exts,
             test_frac=test_frac,
             val_frac=val_frac,
+            balance=balance,
             seed=seed,
             clear_dest=clear_dest,
             out_training=DATA_DIR / "training",
@@ -227,7 +237,12 @@ def main(argv=None) -> int:
         uniq = sorted({str(p) for p in paths})
         random.shuffle(uniq)
 
+        # Optional class balancing: cap to the smallest class size
+        if cap_per_class is not None and len(uniq) > cap_per_class:
+            # random.sample returns a new list; keep size == cap_per_class
+            uniq = random.sample(uniq, cap_per_class)
         n = len(uniq)
+
         if n == 0:
             continue
 

@@ -20,14 +20,23 @@ class SplitPlan:
     total_val: int
     total_test: int
 
-def plan_split(combined: Mapping[str, Iterable[Path]], test_frac: float, val_frac: float, seed: int) -> SplitPlan:
+def plan_split(combined: Mapping[str, Iterable[Path]], test_frac: float, val_frac: float, seed: int,
+               balance: str = "none") -> SplitPlan:
     random.seed(seed)
+
+    cap_per_class = None
+    if balance == "equalize":
+        cap_per_class = min(len({str(p) for p in paths}) for paths in combined.values() if paths)
+
     classes: List[ClassPlan] = []
     total_src = total_train = total_val = total_test = 0
 
     for cls in sorted(combined.keys()):
         uniq = sorted({str(p) for p in combined[cls]})
+        if cap_per_class is not None and len(uniq) > cap_per_class:
+            uniq = random.sample(uniq, cap_per_class)
         n = len(uniq)
+
         if n == 0:
             continue
         n_test = max(1, int(n * test_frac))
@@ -52,6 +61,7 @@ def make_log_extra(
     *,
     dataset_slug: str,
     pointer,
+    balance: str,
     src_training: Path,
     src_testing: Path,
     exts: str,
@@ -72,6 +82,7 @@ def make_log_extra(
         "exts": exts,
         "test_frac": test_frac,
         "val_frac": val_frac,
+        "balance": balance,
         "seed": seed,
         "clear_dest": clear_dest,
         "outputs": {
@@ -104,6 +115,7 @@ def render_human(plan: SplitPlan, context: Dict) -> str:
     lines.append(f"  exts:          {context['exts']}")
     lines.append(f"  test_frac:     {context['test_frac']}")
     lines.append(f"  val_frac:      {context['val_frac']}")
+    lines.append(f"  balance:       {context['balance']}")
     lines.append(f"  seed:          {context['seed']}")
     lines.append(f"  clear_dest:    {context['clear_dest']}")
     outs = context["outputs"]
