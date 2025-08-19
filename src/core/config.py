@@ -27,6 +27,55 @@ from src.utils.paths import CONFIGS_DIR
 # ----------------------- Dataclasses (typed schema) ---------------------------
 
 @dataclass
+class MergeConfig:
+    """
+    Config for the 'merge' stage.
+
+    dataset : str | None
+        Kaggle slug 'owner/dataset' used to auto-locate the latest fetch pointer.
+        Ignored if 'pointer' is provided.
+    pointer : Path | None
+        Explicit path to the fetch pointer JSON; overrides 'dataset'.
+    exts : list[str] | 'all' | None
+        Allowed file extensions when scanning source roots; None => CLI/default behavior.
+    clear_dest : bool
+        If true, empties DATA_DIR/merged before writing.
+    """
+    dataset: Optional[str] = None
+    pointer: Optional[Path] = None
+    exts: Optional[object] = None
+    clear_dest: bool = False
+    dry_run: bool = False  # for testing
+
+def build_merge_config(yaml_path: Optional[Path], overrides: List[str]) -> MergeConfig:
+    """
+    Build a MergeConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {
+        "dataset": None,
+        "pointer": None,
+        "exts": None,
+        "clear_dest": False,
+        "dry_run": False,
+    }
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    pointer = Path(base["pointer"]) if base.get("pointer") else None
+    return MergeConfig(
+        dataset=base.get("dataset"),
+        pointer=pointer,
+        exts=base.get("exts"),
+        clear_dest=bool(base.get("clear_dest", False)),
+        dry_run=bool(base.get("dry_run", False)),
+    )
+
+
+@dataclass
 class ValidateConfig:
     """
     Config for the 'validate' stage.
@@ -418,6 +467,7 @@ class MasterConfig:
 
     # Per-stage blocks (you already defined these dataclasses & builders):
     fetch: "FetchConfig" = field(default_factory=lambda: FetchConfig())
+    merge: "MergeConfig" = field(default_factory=lambda: MergeConfig())
     split: "SplitConfig" = field(default_factory=lambda: SplitConfig())
     resize: "ResizeConfig" = field(default_factory=lambda: ResizeConfig())
     validate: "ValidateConfig" = field(default_factory=lambda: ValidateConfig())
@@ -764,6 +814,7 @@ def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> Mast
         env=EnvConfig(**base.get("env", {})),
         log=LoggingConfig(**base.get("log", {})),
         fetch=FetchConfig(**base.get("fetch", {})),
+        merge=MergeConfig(**base.get("merge", {})),
         split=SplitConfig(**base.get("split", {})),
         resize=ResizeConfig(**base.get("resize", {})),
         validate=ValidateConfig(**base.get("validate", {})),

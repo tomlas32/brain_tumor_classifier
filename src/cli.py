@@ -12,17 +12,64 @@ import typer
 from typing import Optional, List
 from pathlib import Path
 
-from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, CONFIGS_DIR
+from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, DEFAULT_INDEX_REMAP
 from src.utils.configs import DEFAULT_DATASET
 from src.utils.parser_utils import DEFAULT_EXTS
 from src.utils.logging_utils import get_logger
 
 
-DEFAULT_INDEX_REMAP = OUTPUTS_DIR / "mappings" / "latest.json"
-
 app = typer.Typer()
 
 log = get_logger(__name__)
+
+
+@app.command()
+def merge(
+    dataset: str = DEFAULT_DATASET,
+    pointer: Optional[Path] = None,
+    exts: str = DEFAULT_EXTS,
+    clear_dest: bool = False,
+    log_level: str = "INFO",
+    log_file: Optional[str] = None,
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: list[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., clear_dest=true exts=all). Repeatable."),
+    dry_run: bool = False,
+):
+    """
+    Merge Kaggle's original Training/Testing into a single canonical set:
+
+        data/merged/<class>/*
+
+    - Reads the latest fetch pointer (or --pointer).
+    - Scans both roots, filters by --exts (use 'all' to accept any).
+    - Copies into MERGED_DIR (optionally clearing it first).
+    - Writes a manifest under outputs/merge/.
+    """
+    from src.pipeline import merge as merge_mod
+
+    argv = [
+        "--dataset", dataset,
+        "--exts", exts,
+        "--log-level", log_level,
+    ]
+    if pointer:
+        argv += ["--pointer", str(pointer)]
+    if clear_dest:
+        argv += ["--clear-dest"]
+    if log_file:
+        argv += ["--log-file", str(log_file)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    for ov in override or []:
+        argv += ["--override", ov]
+    if dry_run:
+        argv += ["--dry-run"]
+
+    log.info("cli.dispatch", extra={"stage": "merge", "argv": argv})
+    code = merge_mod.main(argv)
+    raise typer.Exit(code)
+
 
 @app.command()
 def fetch(

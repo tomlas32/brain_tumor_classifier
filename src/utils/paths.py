@@ -17,8 +17,6 @@ Date: 2025-0-13
 Version: 1.0
 
 """
-
-
 from pathlib import Path
 import os
 
@@ -31,15 +29,24 @@ OUTPUTS_DIR = Path(os.getenv("OUTPUTS_DIR", PROJECT_ROOT / "outputs"))
 CONFIGS_DIR = SRC_DIR / "configs"  
 NOTEBOOKS   = PROJECT_ROOT / "notebooks"
 
-# --- Canonical subdirectories (shared across stages) ---
+# NEW: canonical data roots introduced by the new pipeline order
+MERGED_DIR     = DATA_DIR / "merged"      # output of merge stage (class folders)
+PROCESSED_DIR  = DATA_DIR / "processed"   # output of resize stage (class folders)
+
 # validation reports are written by `validate` and consumed by `cleanup`:
 VALIDATION_REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
-# (optional but handy) class mappings written by `split` and used by others:
+
+# Class mappings written by `split` and used by others:
 MAPPINGS_DIR           = OUTPUTS_DIR / "mappings"
-# cleanup own outputs (plan/manifest). Okay to centralize as a path constant:
+
+# cleanup own outputs (plan/manifest):
 CLEANUP_REPORTS_DIR    = OUTPUTS_DIR / "cleanup_reports"
-# quarantine destination root (kept here to avoid hardcoding in multiple places):
+
+# quarantine destination root:
 QUARANTINE_ROOT        = DATA_DIR / "quarantine"
+
+
+DEFAULT_INDEX_REMAP = OUTPUTS_DIR / "mappings" / "latest.json"
 
 def ensure_base_dirs():
     for p in (DATA_DIR, MODELS_DIR, OUTPUTS_DIR):
