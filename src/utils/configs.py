@@ -1,1 +1,0 @@
-DEFAULT_DATASET = "sartajbhuvaji/brain-tumor-classification-mri"
