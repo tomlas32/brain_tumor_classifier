@@ -1,8 +1,8 @@
 # configs/eval.yaml
 run_id: brain-tumor-exp01-eval
 data:
-  eval_in: data/testing_resized
-  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri
+  eval_in: data/testing
+  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri/latest.json
   image_size: 224
   batch_size: 32
   num_workers: 4

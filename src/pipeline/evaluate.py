@@ -3,7 +3,8 @@ Evaluate a trained classifier on a class-structured test set.
 
 What this script does
 ---------------------
-1) Loads the resized test dataset (from `resize.py`) and image transforms.
+1) Loads the test dataset produced by the split stage (`data/testing`) and image transforms.
+   (Images are already resized/padded in the processed store.)
 2) **Aligns class encoding** using `index_remap.json`:
    - If mapping is missing/unreadable → WARN, proceed with dataset order.
    - If same set but different order → re-map dataset to expected order (WARN).
@@ -18,12 +19,12 @@ What this script does
 
 Typical pipeline order
 ----------------------
-fetch → split → resize → validate → train → **evaluate**
+fetch → merge → validate (pre) → cleanup → resize → validate (post) → split → train → **evaluate**
 
 Examples
 --------
 python -m src.pipeline.evaluate \
-  --eval-in data/testing_resized \
+  --eval-in data/testing \
   --trained-model models/best_valF1_0.9123_epoch14.pth \
   --model resnet18 --image-size 224 --batch-size 64
 """

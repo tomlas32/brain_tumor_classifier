@@ -57,7 +57,7 @@ class EvalRunnerInputs:
     image_size : int
         Target square size after offline resize/pad (e.g., 224).
     eval_in : Path
-        Root directory of the resized test set (class-structured).
+        Root directory of the test set from the split stage (class-structured).
     mapping_path : Path
         Path to `index_remap.json` used to align class encoding.
     model_name : {'resnet18','resnet34','resnet50'}
