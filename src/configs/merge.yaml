@@ -1,0 +1,4 @@
+pointer: "outputs/pointers/fetch/the_adeel/brain-tumor-dataset/latest.json"
+exts: ".png,.jpg,.jpeg,.bmp,.tif,.tiff"  # or "all" / "+webp" etc.
+clear_dest: true
+dry_run: false

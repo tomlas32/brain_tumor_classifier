@@ -23,7 +23,7 @@ from typing import Dict, List
 
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR, MERGED_DIR
 from src.core.config import build_merge_config, to_dict
-from src.utils.configs import DEFAULT_DATASET
+from src.utils.paths import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
 from src.core.artifacts import read_fetch_pointer

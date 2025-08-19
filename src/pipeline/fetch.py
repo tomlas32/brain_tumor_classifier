@@ -64,7 +64,7 @@ from pathlib import Path
 
 import kagglehub
 
-from src.utils.configs import DEFAULT_DATASET
+from src.utils.paths import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import add_common_logging_args
 from src.utils.paths import DATA_DIR

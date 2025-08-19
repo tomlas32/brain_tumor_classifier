@@ -48,6 +48,8 @@ QUARANTINE_ROOT        = DATA_DIR / "quarantine"
 
 DEFAULT_INDEX_REMAP = OUTPUTS_DIR / "mappings" / "latest.json"
 
+DEFAULT_DATASET = "sartajbhuvaji/brain-tumor-classification-mri"
+
 def ensure_base_dirs():
     for p in (DATA_DIR, MODELS_DIR, OUTPUTS_DIR):
         p.mkdir(parents=True, exist_ok=True)

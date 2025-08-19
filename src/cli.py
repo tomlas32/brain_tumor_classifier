@@ -13,7 +13,7 @@ from typing import Optional, List
 from pathlib import Path
 
 from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, DEFAULT_INDEX_REMAP
-from src.utils.configs import DEFAULT_DATASET
+from src.utils.paths import DEFAULT_DATASET
 from src.utils.parser_utils import DEFAULT_EXTS
 from src.utils.logging_utils import get_logger
 
