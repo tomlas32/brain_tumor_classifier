@@ -146,9 +146,9 @@ def add_model_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
 def add_common_dataset_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--train-in", type=Path, default=DATA_DIR / "training",
-                        help="Input root with class subfolders for TRAIN (default: data/training_resized)")
-    parser.add_argument("--test-in", type=Path, default=DATA_DIR / "testing_resized",
-                        help="Optional input root with class subfolders for TEST (default: data/testing_resized)")
+                    help="Input root with class subfolders for TRAIN (default: data/training)")
+    parser.add_argument("--test-in", type=Path, default=DATA_DIR / "testing",
+                    help="Optional input root with class subfolders for TEST (default: data/testing)")
     parser.add_argument("--original-test-in", type=Path, default=None,
                         help="Optional 'original' external test set root (class subfolders)")
     parser.add_argument("--val-frac", type=float, default=0.20,
@@ -158,7 +158,7 @@ def add_common_dataset_args(parser: argparse.ArgumentParser) -> argparse.Argumen
 
 def add_common_eval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--eval-in", type=Path, default=DATA_DIR / "testing",
-                        help="Input root with class subfolders for evaluation (default: data/testing_resized)")
+                    help="Input root with class subfolders for evaluation (default: data/testing)")
     parser.add_argument("--eval-out", type=Path, default=OUTPUTS_DIR / "evaluation",
                         help="Output directory for evaluation (default: outputs/evaluation)")
     parser.add_argument("--trained-model", type=Path)
