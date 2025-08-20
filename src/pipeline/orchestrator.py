@@ -207,9 +207,9 @@ def _write_stage_yaml(run_dir: Path, stage: str, block: object) -> Path:
 def _stage_module(stage: str):
     return {
         "fetch": fetch_mod,
-        "merge": merge_mod,         # NEW
+        "merge": merge_mod,         
         "validate_pre": validate_mod,
-        "cleanup": cleanup_mod,     # explicit stage now
+        "cleanup": cleanup_mod,     
         "resize": resize_mod,
         "validate_post": validate_mod,
         "split": split_mod,
@@ -264,6 +264,7 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
         "require_rgb": False,
         "report_tag": "pre",
         "write_report": True,
+        "fail_on": "never",
     })
 
     # Post-validate on processed (strict RGB/size)
@@ -275,6 +276,7 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
         "require_rgb": True,
         "report_tag": "post",
         "write_report": True,
+        "fail_on": "error", 
     })
 
     cfg_paths = {

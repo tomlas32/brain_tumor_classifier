@@ -36,7 +36,7 @@ validate:
   dup_check: true
   warn_low_std: 3.0
   min_file_bytes: 1024
-  fail_on: error                      # 'error' | 'warning' | 'never'
+  fail_on: never                      # 'error' | 'warning' | 'never'
   mapping_pointer: null               # optional (for class set enforcement later if you add it)
   write_report: true
   dry_run: false
