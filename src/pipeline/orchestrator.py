@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.utils.logging_utils import get_logger, configure_logging
-from src.utils.paths import OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
+from src.utils.paths import OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR, ensure_base_dirs
 
 from src.core.config import (
     MasterConfig,
@@ -377,6 +377,7 @@ def run_pipeline(
     bootstrap_env(seed=master.env.seed)
     log_env_once()
     os.environ["RUN_ID"] = run_id
+    ensure_base_dirs()
 
     # Build plan + ensure run dir
     run_dir = _mk_run_dir(run_id)
