@@ -67,7 +67,7 @@ split:
   dry_run: false
 
 train:
-  data:
+  data: {}
   train_in: data/training
   val_in: data/validation      # <<< add this
   val_frac: 0.0                # <<< disable internal split

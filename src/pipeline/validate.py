@@ -339,8 +339,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Validate a dataset (pre or post processing)")
     parser.add_argument("--in-dir", type=Path, default=None,
         help="Dataset root to validate. If omitted: uses data/merged for pre or data/processed for post (based on config).")
-    parser.add_argument("--index-remap", type=Path, default=OUTPUTS_DIR / "mappings" / "latest.json",
-                        help="Path to index_remap.json that defines allowed classes")
+    parser.add_argument("--index-remap", type=Path, default=None,
+                    help="Optional path to index_remap.json (allowed classes). If omitted, label checks are skipped.")
     parser.add_argument("--size", type=int, default=224, help="Expected image size (square)")
     parser.add_argument("--exts", type=str, default=DEFAULT_EXTS,
                         help="Comma-separated extensions. Use +ext to add; 'all' to accept any.")
