@@ -38,21 +38,21 @@ python -m src.pipeline.evaluate --config src/configs/evaluate.yaml
 FULL END-TO-END
 
 - entire pipline with all functions
-python -m src.cli pipeline --config configs/pipeline.yaml
+python -m src.cli pipeline --config src/configs/pipeline.yaml
 
 - This makes the fetch dry-run but run the full pipeline
-python -m src.cli pipeline --config configs/pipeline.yaml -o fetch.dry_run=true
+python -m src.cli pipeline --config src/configs/pipeline.yaml -o fetch.dry_run=true
 
 SKIP EARLY STAGE 
-python -m src.cli pipeline --config configs/pipeline.yaml --skip fetch --skip split
+python -m src.cli pipeline --config src/configs/pipeline.yaml --skip fetch --skip split
 
 
 RESUME RESIZE
-python -m src.cli pipeline --config configs/pipeline.yaml --resume-from resize
+python -m src.cli pipeline --config src/configs/pipeline.yaml --resume-from resize
 
 
 OVERRIDES VALUES ON THE FLY
-python -m src.cli pipeline --config configs/pipeline.yaml \
+python -m src.cli pipeline --config src/configs/pipeline.yaml \
   -o train.loop.epochs=5 \
   -o evaluate.io.make_gradcam=false
 

@@ -18,7 +18,6 @@ fetch:
   cache_dir: data
   write_pointer: true
   pointer_dir: outputs/pointers/fetch/sartajbhuvaji/brain-tumor-classification-mri
-  run_id: null
   dry_run: false
 
 merge:
@@ -28,7 +27,6 @@ merge:
   exts: null                          # null → script defaults; use 'all' or list like ['.jpg','.png'] to force
   clear_dest: false
   dry_run: false
-  run_id: null
 
 validate:
   in_dir: null                        # orchestrator sets this to MERGED_DIR (pre) and PROCESSED_DIR (post)
@@ -45,7 +43,6 @@ validate:
   enforce_size: true                  # orchestrator flips to False for pre, True for post
   require_rgb: true                   # orchestrator flips to False for pre, True for post
   report_tag: null                    # orchestrator sets 'pre' and 'post' at runtime
-  run_id: null
 
 resize:
   train_in: data/merged
@@ -56,7 +53,6 @@ resize:
   exts: "jpg,jpeg,png"   # or "all"
   dry_run: false
   log_level: "INFO"
-  run_id: null
 
 split:
   dataset: sartajbhuvaji/brain-tumor-classification-mri
@@ -69,7 +65,6 @@ split:
   save_remap_to_project_root: true
   mapping_use_dataset_subdir: false
   mapping_write_split_copy: false
-  run_id: null
   dry_run: false
 
 train:

@@ -341,6 +341,7 @@ def run_pipeline(
     Behavior
     --------
     - Applies environment bootstrap once (seed, determinism) and exports RUN_ID.
+    - Ensures base directories (data/, models/, outputs/) exist before any stage runs.
     - Writes per-stage config files into outputs/orchestrator/<run_id>/.
     - Writes a run manifest at the end with per-stage codes and durations.
     """
