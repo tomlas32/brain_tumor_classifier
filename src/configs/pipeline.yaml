@@ -52,7 +52,6 @@ resize:
   size: 224
   exts: "jpg,jpeg,png"   # or "all"
   dry_run: false
-  log_level: "INFO"
 
 split:
   dataset: sartajbhuvaji/brain-tumor-classification-mri
@@ -106,11 +105,6 @@ train:
     prefer_cuda: true
     cudnn_deterministic: true
     cudnn_benchmark: false
-
-  log:
-    level: INFO
-    file: null
-    json: false
 
   callbacks:
     early_stopping:
