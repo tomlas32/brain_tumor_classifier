@@ -69,11 +69,11 @@ def monkeypatch_mapping(monkeypatch, tmp_path):
         p.write_text('{"0":"class0","1":"class1"}', encoding="utf-8")
         return p
 
-    monkeypatch.setattr("src.training.runner.read_index_remap", fake_read_index_remap)
-    monkeypatch.setattr("src.training.runner.expected_classes_from_remap", fake_expected_classes_from_remap)
-    monkeypatch.setattr("src.training.runner.verify_dataset_classes", fake_verify_dataset_classes)
-    monkeypatch.setattr("src.training.runner.default_index_remap_path", fake_default_index_remap_path)
-    monkeypatch.setattr("src.training.runner.copy_index_remap", fake_copy_index_remap)
+    monkeypatch.setattr("src.train.runner.read_index_remap", fake_read_index_remap)
+    monkeypatch.setattr("src.train.runner.expected_classes_from_remap", fake_expected_classes_from_remap)
+    monkeypatch.setattr("src.train.runner.verify_dataset_classes", fake_verify_dataset_classes)
+    monkeypatch.setattr("src.train.runner.default_index_remap_path", fake_default_index_remap_path)
+    monkeypatch.setattr("src.train.runner.copy_index_remap", fake_copy_index_remap)
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ def monkeypatch_metrics(monkeypatch):
         return f1, f1, f1, f1, torch.zeros(8, dtype=torch.long).numpy(), torch.zeros(8, dtype=torch.long).numpy()
 
     fake_evaluate._epoch = 0
-    monkeypatch.setattr("src.training.runner.evaluate", fake_evaluate)
+    monkeypatch.setattr("src.train.runner.evaluate", fake_evaluate)
     return f1_seq
 
 
@@ -118,7 +118,7 @@ def _base_inputs(tmp_path, args_dict_overrides=None):
 
     return TrainRunnerInputs(
         image_size=224,
-        train_in=tmp_path / "data" / "training_resized",
+        train_in=tmp_path / "data" / "training",
         batch_size=4,
         num_workers=0,
         val_frac=0.25,
@@ -143,7 +143,7 @@ def test_early_stopping_triggers(tmp_path, caplog, monkeypatch_data, monkeypatch
     """
     Expect: training stops early and logs `callback.early_stop`.
     """
-    log = get_logger("src.training.runner")
+    log = get_logger("src.train.runner")
     caplog.set_level("INFO", logger=log.name)
 
     inputs = _base_inputs(tmp_path)
@@ -164,7 +164,7 @@ def test_checkpoint_best_and_last(tmp_path, caplog, monkeypatch_data, monkeypatc
     Expect: best checkpoint saved (dynamic name), last.pth saved each epoch,
     and both actions logged with `checkpoint.saved`.
     """
-    log = get_logger("src.training.runner")
+    log = get_logger("src.train.runner")
     caplog.set_level("INFO", logger=log.name)
 
     inputs = _base_inputs(tmp_path)
@@ -185,7 +185,7 @@ def test_lr_logger_json_and_log(tmp_path, caplog, monkeypatch_data, monkeypatch_
     """
     Expect: LR history JSON written and `lr_logger.written` logged.
     """
-    log = get_logger("src.training.runner")
+    log = get_logger("src.train.runner")
     caplog.set_level("INFO", logger=log.name)
 
     inputs = _base_inputs(tmp_path)
@@ -208,7 +208,7 @@ def test_checkpoint_periodic(tmp_path, caplog, monkeypatch_data, monkeypatch_map
     """
     Expect: periodic checkpoints at epochs 2 and 4, and logs for each save.
     """
-    log = get_logger("src.training.runner")
+    log = get_logger("src.train.runner")
     caplog.set_level("INFO", logger=log.name)
 
     # Enable periodic snapshots every 2 epochs; disable ES to run full loop
@@ -235,7 +235,7 @@ def test_checkpoint_periodic(tmp_path, caplog, monkeypatch_data, monkeypatch_map
 
 def test_scheduler_selected_logged(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
     # Get the runner logger (same as used in training runner)
-    log = get_logger("src.training.runner")
+    log = get_logger("src.train.runner")
 
     args_overrides = {
         "sched": {"name": "steplr", "params": {"step_size": 7, "gamma": 0.3}},

@@ -75,11 +75,11 @@ pytest.ini
 
 ### 1) Install dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r requirements_dev.txt
 ```
 
 ### 2) Authentication (Kaggle)
-Create `~/.kaggle/kaggle.json` with your Kaggle API credentials (chmod 600).
+
 
 ### 3) Run the full pipeline
 ```bash

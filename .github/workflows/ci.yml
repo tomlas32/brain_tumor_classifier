@@ -90,6 +90,8 @@ jobs:
           python -m src.pipeline.evaluate --config src/configs/evaluate.yaml --dry-run || true
 
       - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest -q
 

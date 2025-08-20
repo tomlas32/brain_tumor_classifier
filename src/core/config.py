@@ -523,7 +523,7 @@ def load_yaml_config(path: str | Path) -> dict:
     p = Path(raw)
 
     # If the string looks rooted on Win/Unix, reinterpret as relative name
-    if raw.startswith("\\") or raw.startswith("/"):
+    if not Path(raw).is_absolute() and raw.startswith("\\"):
         p = Path(raw.lstrip("\\/"))
 
     candidates = [
