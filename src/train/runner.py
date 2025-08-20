@@ -193,7 +193,7 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     -------
     (best_f1, best_epoch, checkpoint_path)
     """
-    log.info("train.start", extra={"run_id": inputs.run_id, "args": inputs.args_dict})
+    log.info("train.start", extra={"run_id": inputs.run_id, "cfg_args": inputs.args_dict})
 
     # ---- Device (honor env.prefer_cuda if present)
     env_cfg = inputs.args_dict.get("env", {}) if isinstance(inputs.args_dict, dict) else {}

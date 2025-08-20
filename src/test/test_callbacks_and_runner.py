@@ -1,5 +1,5 @@
 # tests/test_callbacks_and_runner.py
-import json
+import json, dataclasses
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -221,7 +221,7 @@ def test_checkpoint_periodic(tmp_path, caplog, monkeypatch_data, monkeypatch_map
         }
     }
     inputs = _base_inputs(tmp_path, args_overrides)
-    inputs.epochs = 5  # → expect ckpt_epoch2 & ckpt_epoch4
+    inputs = dataclasses.replace(inputs, epochs=5) # → expect ckpt_epoch2 & ckpt_epoch4
     _ = run_training(inputs)
 
     # Filesystem effects
@@ -247,7 +247,7 @@ def test_scheduler_selected_logged(tmp_path, caplog, monkeypatch_data, monkeypat
         },
     }
     inputs = _base_inputs(tmp_path, args_overrides)
-    inputs.epochs = 2
+    inputs = dataclasses.replace(inputs, epochs=2)
 
     # Capture logs emitted by our project logger
     caplog.set_level("INFO", logger=log.name)
