@@ -92,8 +92,7 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: |
-          pytest -q
+        run: pytest -q
 
       - name: Upload artifacts (outputs & logs)
         if: always()

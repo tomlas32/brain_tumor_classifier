@@ -33,14 +33,14 @@ def monkeypatch_data(monkeypatch, tiny_dataset):
             self.samples = [(f"fake_{i}.png", int(l.item())) for i, (_, l) in enumerate(tiny_dataset)]
             self.classes = ["class0", "class1"]
 
-    monkeypatch.setattr("src.training.runner.ImageFolder", FakeImageFolder)
+    monkeypatch.setattr("src.train.runner.ImageFolder", FakeImageFolder)
 
     # make_loader: just wrap our tensor dataset regardless of subset
     def fake_make_loader(subset_or_ds, batch_size, shuffle, num_workers, seed):
         # We ignore subset indices here; tiny_dataset is fine for both
         return DataLoader(tiny_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0)
 
-    monkeypatch.setattr("src.training.runner.make_loader", fake_make_loader)
+    monkeypatch.setattr("src.train.runner.make_loader", fake_make_loader)
 
 
 @pytest.fixture
