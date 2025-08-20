@@ -390,6 +390,15 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         copy_index_remap(mapping_path, ckpt_path.parent)
     except Exception as e:
         log.warning("mapping.copy_failed", extra={"error": str(e)})
+    
+    # Build a robust class_to_idx (mocks may not define .class_to_idx)
+    if 'train_base_ds' in locals() and hasattr(train_base_ds, "class_to_idx"):
+        class_to_idx_safe = train_base_ds.class_to_idx
+    elif 'full_train' in locals() and hasattr(full_train, "class_to_idx"):
+        class_to_idx_safe = full_train.class_to_idx
+    else:
+        # fall back to mapping derived from expected_classes (idx order)
+        class_to_idx_safe = {cls: i for i, cls in enumerate(expected_classes)}
 
     # Write training summary manifest (unchanged)
     write_training_summary(
@@ -397,7 +406,7 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         run_id=inputs.run_id,
         args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in inputs.args_dict.items()},
         class_names=expected_classes,
-        class_to_idx=(train_base_ds.class_to_idx if 'train_base_ds' in locals() else full_train.class_to_idx),
+        class_to_idx=class_to_idx_safe,
         per_class_counts=per_class_counts,
         best_f1=best_f1,
         best_epoch=best_epoch,
