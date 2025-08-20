@@ -313,7 +313,7 @@ def main(argv=None) -> int:
 
     if total_to_move == 0:
         print("Nothing to quarantine. Dataset already clean per selected policy/severity.")
-        return 3
+        return 0
 
     # Execute moves
     moved = []

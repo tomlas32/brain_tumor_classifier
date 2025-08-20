@@ -33,7 +33,7 @@ validate:
   index_remap: null
   size: 224
   exts: null                          # accept defaults; you can force with 'all' or a list
-  dup_check: false
+  dup_check: true
   warn_low_std: 3.0
   min_file_bytes: 1024
   fail_on: error                      # 'error' | 'warning' | 'never'
