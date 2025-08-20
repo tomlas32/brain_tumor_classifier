@@ -296,11 +296,11 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         step_size = int(sched_params.get("step_size", inputs.step_size))
         gamma = float(sched_params.get("gamma", inputs.gamma))
         scheduler = lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
-        log.info("scheduler.selected", extra={"name": "StepLR", "step_size": step_size, "gamma": gamma})
+        log.info("scheduler.selected", extra={"scheduler": "StepLR", "step_size": step_size, "gamma": gamma})
     else:
         # fallback (your previous default)
         scheduler = lr_scheduler.StepLR(optimizer, step_size=inputs.step_size, gamma=inputs.gamma)
-        log.info("scheduler.selected", extra={"name": "StepLR", "step_size": inputs.step_size, "gamma": inputs.gamma})
+        log.info("scheduler.selected", extra={"scheduler": "StepLR", "step_size": inputs.step_size, "gamma": inputs.gamma})
 
     scaler = torch.cuda.amp.GradScaler(enabled=inputs.amp and torch.cuda.is_available())
 
