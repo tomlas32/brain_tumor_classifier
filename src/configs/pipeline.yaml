@@ -17,72 +17,126 @@ fetch:
   dataset: sartajbhuvaji/brain-tumor-classification-mri
   cache_dir: data
   write_pointer: true
+  pointer_dir: outputs/pointers/fetch/sartajbhuvaji/brain-tumor-classification-mri
+
+merge:
+  # Prefer to mirror fetch.dataset so merge can auto-locate the fetch pointer.
+  dataset: sartajbhuvaji/brain-tumor-classification-mri
+  pointer: null                       # explicit path to fetch pointer JSON (overrides dataset)
+  exts: null                          # null → script defaults; use 'all' or list like ['.jpg','.png'] to force
+  clear_dest: false
+  dry_run: false
+
+validate:
+  in_dir: null                        # orchestrator sets this to MERGED_DIR (pre) and PROCESSED_DIR (post)
+  index_remap: null
+  size: 224
+  exts: null                          # accept defaults; you can force with 'all' or a list
+  dup_check: false
+  warn_low_std: 3.0
+  min_file_bytes: 1024
+  fail_on: error                      # 'error' | 'warning' | 'never'
+  mapping_pointer: null               # optional (for class set enforcement later if you add it)
+  write_report: true
+  dry_run: false
+  enforce_size: true                  # orchestrator flips to False for pre, True for post
+  require_rgb: true                   # orchestrator flips to False for pre, True for post
+  report_tag: null                    # orchestrator sets 'pre' and 'post' at runtime
+
+resize:
+  train_in: data/merged
+  train_out: data/processed
+  test_in:
+  test_out:
+  size: 224
+  exts: "jpg,jpeg,png"   # or "all"
+  dry_run: false
+  log_level: "INFO"
 
 split:
   dataset: sartajbhuvaji/brain-tumor-classification-mri
+  # pointer: outputs/downloads_pointer/owner/brain-tumor-mri/latest.json  # (optional; overrides dataset)
   test_frac: 0.20
+  val_frac: 0.10
+  seed: 42
   clear_dest: true
   exts: [".jpg", ".jpeg", ".png"]
-
-resize:
-  train_in: data/training
-  train_out: data/training_resized
-  test_in: data/testing
-  test_out: data/testing_resized
-  size: 224
-  exts: all
-
-validate:
-  in_dir: data/training_resized
-  index_remap: outputs/mappings/latest.json
-  size: 224
-  fail_on: warning
-  warn_low_std: 3.0
-  min_file_bytes: 1024
-  dup_check: false
+  save_remap_to_project_root: true
+  mapping_use_dataset_subdir: false
+  mapping_write_split_copy: false
 
 train:
   data:
-    image_size: 224
-    train_in: data/training_resized
-    mapping_path: outputs/mappings/latest.json
-    batch_size: 32
-    num_workers: 4
-    val_frac: 0.2
-    seed: 42
+  train_in: data/training
+  val_in: data/validation      # <<< add this
+  val_frac: 0.0                # <<< disable internal split
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  mapping_pointer: outputs/pointers/mapping/<owner>/<slug>/latest.json
+
+  aug:
+    rotate_deg: 15
+    hflip_prob: 0.5
+    jitter_brightness: 0.1
+    jitter_contrast: 0.1
+
   model:
     name: resnet18
     pretrained: true
+
   optim:
     lr: 0.001
     weight_decay: 0.0001
+    amp: true
+    # For your current runner, put scheduler params here (or override via CLI):
     step_size: 10
     gamma: 0.1
-    amp: true
+
   io:
     out_models: models
     out_summary: outputs/training
+
   loop:
     epochs: 20
-  aug:
-    rotate_deg: 10
-    hflip_prob: 0.5
-    jitter_brightness: 0.05
-    jitter_contrast: 0.05
 
+  env:
+    prefer_cuda: true
+    cudnn_deterministic: true
+    cudnn_benchmark: false
+
+  log:
+    level: INFO
+    file: null
+    json: false
+
+  callbacks:
+    early_stopping:
+      enabled: true
+      patience: 5
+      min_delta: 0.002
+      monitor: val_f1
+    checkpoint:
+      save_best: true
+      save_last: false
+      every_n_epochs: 0
+      # out_dir: models/checkpoints
+    lr_logger:
+      enabled: true
 evaluate:
   data:
     image_size: 224
-    eval_in: data/testing_resized
-    mapping_path: outputs/mappings/latest.json
+    eval_in: data/testing        
     batch_size: 32
     num_workers: 4
     seed: 42
   model:
     name: resnet18
-    weights_path: models/best.pth
+    weights_path: models/best.pth   # stable pointer
   io:
     eval_out: outputs/evaluation
     make_galleries: true
     make_gradcam: true
     top_per_class: 6
+  run_id: null
+  dry_run: false
