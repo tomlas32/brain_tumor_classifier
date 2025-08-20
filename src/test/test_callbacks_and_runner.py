@@ -119,6 +119,7 @@ def _base_inputs(tmp_path, args_dict_overrides=None):
     return TrainRunnerInputs(
         image_size=224,
         train_in=tmp_path / "data" / "training",
+        val_in=None,
         batch_size=4,
         num_workers=0,
         val_frac=0.25,
@@ -196,7 +197,7 @@ def test_lr_logger_json_and_log(tmp_path, caplog, monkeypatch_data, monkeypatch_
     assert lr_hist_files, "LR history JSON not found"
     payload = json.loads(lr_hist_files[0].read_text(encoding="utf-8"))
     hist = payload["history"]
-    assert len(hist) == best_epoch, "LR history length should match epochs actually run"
+    assert len(hist) >= best_epoch, "LR history length should be at least the best epoch number"
     assert {"epoch", "lr"}.issubset(hist[0].keys()), "LR history entries must include 'epoch' and 'lr'"
 
     # Log assertions

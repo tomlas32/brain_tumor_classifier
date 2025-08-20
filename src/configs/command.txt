@@ -3,21 +3,36 @@ DRY RUN
 - entire pipeline
 python -m src.cli pipeline --config src/configs/pipeline.yaml --dry-run
 
-- single stage only
-python -m src.cli fetch --config "C:\Users\tomla\Documents\Projects\brain_tumor_classifier\src\configs\fetch.yaml" --dry-run
-python -m src.cli fetch --config src/configs/fetch.yaml --dry-run
-python -m src.cli split --config src/configs/split.yaml --dry-run
-python -m src.cli resize --config src/configs/resize.yaml --dry-run
-python -m src.cli validate --config src/configs/validate.yaml --dry-run
-python -m src.cli evaluate --config src/configs/evaluate.yaml --dry-run
-python -m src.cli train --config src/configs/train.yaml --dry-run
 
 FULL RUN
-- run a single stage 
-python -m src.cli fetch --config src/configs/fetch.yaml
-python -m src.cli split --config src/configs/split.yaml
-python -m src.cli resize --config src/configs/resize.yaml
-python -m src.cli validate --config src/configs/validate.yaml
+
+- single stage
+# 1) fetch
+python -m src.pipeline.fetch --config src/configs/fetch.yaml
+
+# 2) merge (uses dataset or the fetch pointer if you set it)
+python -m src.pipeline.merge --config src/configs/merge.yaml
+
+# 3) validate (pre)
+python -m src.pipeline.validate --config src/configs/validate_pre.yaml
+
+# 4) cleanup (acts on latest pre report)
+python -m src.pipeline.cleanup --config src/configs/cleanup.yaml
+
+# 5) resize
+python -m src.pipeline.resize --config src/configs/resize.yaml
+
+# 6) validate (post)
+python -m src.pipeline.validate --config src/configs/validate_post.yaml
+
+# 7) split
+python -m src.pipeline.split --config src/configs/split.yaml
+
+# 8) train
+python -m src.pipeline.train --config src/configs/train.yaml
+
+# 9) evaluate
+python -m src.pipeline.evaluate --config src/configs/evaluate.yaml
 
 
 FULL END-TO-END
@@ -40,3 +55,8 @@ OVERRIDES VALUES ON THE FLY
 python -m src.cli pipeline --config configs/pipeline.yaml \
   -o train.loop.epochs=5 \
   -o evaluate.io.make_gradcam=false
+
+
+
+
+

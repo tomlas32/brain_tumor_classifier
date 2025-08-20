@@ -147,7 +147,12 @@ def test_orchestrator_dry_run_plan(tmp_path: Path, master_yaml_min: Path, monkey
     # Verify the orchestrator output directory exists and contains sub-configs
     run_dir = Path("outputs/orchestrator/test-smoke-000")
     assert run_dir.exists(), "orchestrator run directory not created"
-    for stage in ["fetch", "split", "resize", "validate", "train", "evaluate"]:
+
+    expected_subconfigs = [
+        "fetch", "merge", "validate_pre", "cleanup",
+        "resize", "validate_post", "split", "train", "evaluate"
+    ]
+    for stage in expected_subconfigs:
         assert (run_dir / f"{stage}.yaml").exists(), f"missing sub-config for stage: {stage}"
 
 
@@ -167,23 +172,33 @@ def test_orchestrator_full_run_with_mocks(tmp_path: Path, master_yaml_min: Path,
     def _ok_main(argv):  # pragma: no cover - trivial mock
         return 0
 
-    monkeypatch.setattr(orch_mod.fetch_mod, "main", _ok_main, raising=True)
-    monkeypatch.setattr(orch_mod.split_mod, "main", _ok_main, raising=True)
-    monkeypatch.setattr(orch_mod.resize_mod, "main", _ok_main, raising=True)
-    monkeypatch.setattr(orch_mod.validate_mod, "main", _ok_main, raising=True)
-    monkeypatch.setattr(orch_mod.train_mod, "main", _ok_main, raising=True)
+    monkeypatch.setattr(orch_mod.fetch_mod,    "main", _ok_main, raising=True)
+    monkeypatch.setattr(orch_mod.merge_mod,    "main", _ok_main, raising=True)
+    monkeypatch.setattr(orch_mod.cleanup_mod,  "main", _ok_main, raising=True)
+    monkeypatch.setattr(orch_mod.resize_mod,   "main", _ok_main, raising=True)
+    monkeypatch.setattr(orch_mod.split_mod,    "main", _ok_main, raising=True)
+    monkeypatch.setattr(orch_mod.train_mod,    "main", _ok_main, raising=True)
     monkeypatch.setattr(orch_mod.evaluate_mod, "main", _ok_main, raising=True)
+
+    if hasattr(orch_mod, "validate_pre_mod"):
+        monkeypatch.setattr(orch_mod.validate_pre_mod,  "main", _ok_main, raising=True)
+    if hasattr(orch_mod, "validate_post_mod"):
+        monkeypatch.setattr(orch_mod.validate_post_mod, "main", _ok_main, raising=True)
+    if hasattr(orch_mod, "validate_mod"):
+        monkeypatch.setattr(orch_mod.validate_mod, "main", _ok_main, raising=True)
 
     code = run_pipeline(master_yaml=master_yaml_min, overrides=None, dry_run=False, skip=[], resume_from=None)
     assert code == 0
 
     manifest_path = Path("outputs/orchestrator/test-smoke-000/run_manifest.json")
-    assert manifest_path.exists(), "run manifest not written"
-
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["overall_exit_code"] == 0
+
     stages_run = {entry["stage"] for entry in manifest["stages_run"]}
-    assert stages_run == {"fetch", "split", "resize", "validate", "train", "evaluate"}
+    assert stages_run == {
+        "fetch", "merge", "validate_pre", "cleanup",
+        "resize", "validate_post", "split", "train", "evaluate"
+    }
 
 
 def test_cli_pipeline_dry_run(tmp_path: Path, master_yaml_min: Path, monkeypatch: pytest.MonkeyPatch):
