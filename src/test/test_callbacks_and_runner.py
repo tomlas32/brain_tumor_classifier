@@ -235,7 +235,7 @@ def test_checkpoint_periodic(tmp_path, caplog, monkeypatch_data, monkeypatch_map
 
 
 def test_scheduler_selected_logged(tmp_path, caplog, monkeypatch_data, monkeypatch_mapping, monkeypatch_metrics):
-    # Get the runner logger (same as used in training runner)
+    # Use the same logger as the runner
     log = get_logger("src.train.runner")
 
     args_overrides = {
@@ -249,20 +249,16 @@ def test_scheduler_selected_logged(tmp_path, caplog, monkeypatch_data, monkeypat
     inputs = _base_inputs(tmp_path, args_overrides)
     inputs = dataclasses.replace(inputs, epochs=2)
 
-    # Capture logs emitted by our project logger
+    # capture logs from the runner logger
     caplog.set_level("INFO", logger=log.name)
     _ = run_training(inputs)
 
-    # Verify a structured log entry with key 'scheduler.selected' was emitted
-    records = [r for r in caplog.records if r.name == log.name]
-    assert any(r.message == "scheduler.selected" for r in records), "Expected 'scheduler.selected' log"
+    # grab only the scheduler log(s)
+    records = [r for r in caplog.records if r.name == log.name and r.message == "scheduler.selected"]
+    assert records, "Expected 'scheduler.selected' log"
 
-    # Ensure extras (params) were attached
-    found = False
-    for r in records:
-        if r.message == "scheduler.selected":
-            assert "step_size" in r.__dict__["extra"]
-            assert "gamma" in r.__dict__["extra"]
-            found = True
-    assert found, "Expected scheduler parameters in log extra"
+    rec = records[0]
+    # With our formatter, extras are top-level LogRecord attrs
+    assert hasattr(rec, "step_size") and hasattr(rec, "gamma"), "scheduler params missing on record"
+    assert rec.step_size == 7 and rec.gamma == 0.3
 

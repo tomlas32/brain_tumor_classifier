@@ -24,7 +24,7 @@ import torch
 from src.utils.logging_utils import get_logger
 from src.core.artifacts import safe_json_dump, write_latest_pointer
 
-log = get_logger(__name__)
+log = get_logger("src.train.runner")
 
 
 class Callback:
