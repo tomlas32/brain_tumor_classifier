@@ -477,9 +477,81 @@ class MasterConfig:
     split: "SplitConfig" = field(default_factory=lambda: SplitConfig())
     resize: "ResizeConfig" = field(default_factory=lambda: ResizeConfig())
     validate: "ValidateConfig" = field(default_factory=lambda: ValidateConfig())
+    cleanup: CleanupConfig = field(default_factory=CleanupConfig)
     train: "TrainConfig" = field(default_factory=lambda: TrainConfig())
     evaluate: "EvalConfig" = field(default_factory=lambda: EvalConfig())
 
+
+def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:
+    """
+    Build a MasterConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+
+    Parameters
+    ----------
+    yaml_path : Optional[Path]
+        Path to a master YAML. If None, defaults are used and only overrides apply.
+    overrides : list[str]
+        Dotted key overrides, e.g.:
+        - "train.data.image_size=256"
+        - "resize.size=224"
+        - "log.level=DEBUG"
+        - "env.seed=1337"
+
+    Returns
+    -------
+    MasterConfig
+        Fully materialized master config object.
+
+    Logging
+    -------
+    This function does not log; the caller (orchestrator) should log:
+      log.info("config.resolved", extra={"config": to_dict(master_cfg)})
+    """
+    # Start from defaults of the full master structure
+    base = _to_nested_dict(MasterConfig())  # uses asdict on all nested dataclasses
+
+    # Merge YAML (if provided)
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg or {})
+
+    # Apply CLI overrides last
+    base = apply_overrides(base, overrides or [])
+
+    # Reconstruct nested dataclasses from the merged dict
+    return MasterConfig(
+        run_id=base.get("run_id"),
+        env=EnvConfig(**base.get("env", {})),
+        log=LoggingConfig(**base.get("log", {})),
+        fetch=FetchConfig(**base.get("fetch", {})),
+        merge=MergeConfig(**base.get("merge", {})),
+        split=SplitConfig(**base.get("split", {})),
+        resize=ResizeConfig(**base.get("resize", {})),
+        validate=ValidateConfig(**base.get("validate", {})),
+        cleanup=CleanupConfig(**base.get("cleanup", {})), 
+        train=TrainConfig(
+            data=DataConfig(**((base.get("train", {}).get("data")) or {})),
+            model=ModelConfig(**((base.get("train", {}).get("model")) or {})),
+            optim=OptimConfig(**((base.get("train", {}).get("optim")) or {})),
+            io=TrainIOConfig(**((base.get("train", {}).get("io")) or {})),
+            loop=TrainLoopConfig(**((base.get("train", {}).get("loop")) or {})),
+            aug=AugmentConfig(**((base.get("train", {}).get("aug")) or {})),
+            callbacks=CallbacksConfig(
+                early_stopping=EarlyStoppingCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("early_stopping") or {})),
+                checkpoint=CheckpointCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("checkpoint") or {})),
+                lr_logger=LRLoggerCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("lr_logger") or {})),
+            ),
+            run_id=base.get("train", {}).get("run_id"),
+        ),
+        evaluate=EvalConfig(
+            data=DataConfig(**base.get("evaluate", {}).get("data", {})),
+            model=ModelConfig(**base.get("evaluate", {}).get("model", {})),
+            io=EvalIOConfig(**base.get("evaluate", {}).get("io", {})),
+            run_id=base.get("evaluate", {}).get("run_id"),
+        ),
+    )
 
 # ----------------------- Loader / overrides / utils ---------------------------
 
@@ -784,76 +856,6 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         enforce_size=bool(base.get("enforce_size", True)),
         require_rgb=bool(base.get("require_rgb", True)),
         report_tag=base.get("report_tag"),
-    )
-
-def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:
-    """
-    Build a MasterConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-
-    Parameters
-    ----------
-    yaml_path : Optional[Path]
-        Path to a master YAML. If None, defaults are used and only overrides apply.
-    overrides : list[str]
-        Dotted key overrides, e.g.:
-        - "train.data.image_size=256"
-        - "resize.size=224"
-        - "log.level=DEBUG"
-        - "env.seed=1337"
-
-    Returns
-    -------
-    MasterConfig
-        Fully materialized master config object.
-
-    Logging
-    -------
-    This function does not log; the caller (orchestrator) should log:
-      log.info("config.resolved", extra={"config": to_dict(master_cfg)})
-    """
-    # Start from defaults of the full master structure
-    base = _to_nested_dict(MasterConfig())  # uses asdict on all nested dataclasses
-
-    # Merge YAML (if provided)
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg or {})
-
-    # Apply CLI overrides last
-    base = apply_overrides(base, overrides or [])
-
-    # Reconstruct nested dataclasses from the merged dict
-    return MasterConfig(
-        run_id=base.get("run_id"),
-        env=EnvConfig(**base.get("env", {})),
-        log=LoggingConfig(**base.get("log", {})),
-        fetch=FetchConfig(**base.get("fetch", {})),
-        merge=MergeConfig(**base.get("merge", {})),
-        split=SplitConfig(**base.get("split", {})),
-        resize=ResizeConfig(**base.get("resize", {})),
-        validate=ValidateConfig(**base.get("validate", {})),
-        train=TrainConfig(
-            data=DataConfig(**((base.get("train", {}).get("data")) or {})),
-            model=ModelConfig(**((base.get("train", {}).get("model")) or {})),
-            optim=OptimConfig(**((base.get("train", {}).get("optim")) or {})),
-            io=TrainIOConfig(**((base.get("train", {}).get("io")) or {})),
-            loop=TrainLoopConfig(**((base.get("train", {}).get("loop")) or {})),
-            aug=AugmentConfig(**((base.get("train", {}).get("aug")) or {})),
-            callbacks=CallbacksConfig(
-                early_stopping=EarlyStoppingCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("early_stopping") or {})),
-                checkpoint=CheckpointCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("checkpoint") or {})),
-                lr_logger=LRLoggerCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("lr_logger") or {})),
-            ),
-            run_id=base.get("train", {}).get("run_id"),
-        ),
-        evaluate=EvalConfig(
-            data=DataConfig(**base.get("evaluate", {}).get("data", {})),
-            model=ModelConfig(**base.get("evaluate", {}).get("model", {})),
-            io=EvalIOConfig(**base.get("evaluate", {}).get("io", {})),
-            run_id=base.get("evaluate", {}).get("run_id"),
-        ),
     )
 
 

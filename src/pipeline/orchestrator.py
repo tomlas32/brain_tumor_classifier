@@ -81,6 +81,10 @@ DEFAULT_ORDER = [
 
 VALID_STAGES = set(DEFAULT_ORDER)
 
+STAGE_OK = {
+    "cleanup": {0, 3},  # 3 == nothing to quarantine (noop)
+}
+
 def _validate_stage_names(skip: List[str], resume_from: Optional[str]) -> Optional[str]:
     """
     Return an error message if invalid stage names are supplied; otherwise None.
@@ -277,7 +281,7 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
         "fetch": _write_stage_yaml(run_dir, "fetch", master.fetch),
         "merge": _write_stage_yaml(run_dir, "merge", master.merge),
         "validate_pre": _write_stage_yaml(run_dir, "validate_pre", v_pre),
-        "cleanup": _write_stage_yaml(run_dir, "cleanup", {"stage": "cleanup"}),
+        "cleanup": _write_stage_yaml(run_dir, "cleanup", master.cleanup),
         "resize": _write_stage_yaml(run_dir, "resize", master.resize),
         "validate_post": _write_stage_yaml(run_dir, "validate_post", v_post),
         "split": _write_stage_yaml(run_dir, "split", master.split),
@@ -291,9 +295,6 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
         if not _stage_should_run(stage, skip=skip, start_from=resume_from):
             continue
         argv = ["--config", str(cfg_paths[stage])]
-        # >>> Pin cleanup to the PRE-validate report <<<
-        if stage == "cleanup":
-            argv += ["--report", "latest", "--report-tag", "pre"]
         plan.append({"stage": stage, "config_path": cfg_paths[stage], "argv": argv})
 
 
@@ -437,9 +438,9 @@ def run_pipeline(
         results.append({"stage": stage, "exit_code": code, "duration_sec": dt, "argv": argv})
         log.info("orchestrator.stage_end", extra={"stage": stage, "exit_code": code, "duration_sec": dt})
 
-        if code != 0:
+        ok_codes = STAGE_OK.get(stage, {0})
+        if code not in ok_codes:
             overall_code = code
-            # Fail-fast: stop subsequent stages
             break
 
     # Manifest

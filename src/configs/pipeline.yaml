@@ -25,7 +25,7 @@ merge:
   dataset: sartajbhuvaji/brain-tumor-classification-mri
   pointer: null                       # explicit path to fetch pointer JSON (overrides dataset)
   exts: null                          # null → script defaults; use 'all' or list like ['.jpg','.png'] to force
-  clear_dest: false
+  clear_dest: true
   dry_run: false
 
 validate:
@@ -43,6 +43,15 @@ validate:
   enforce_size: true                  # orchestrator flips to False for pre, True for post
   require_rgb: true                   # orchestrator flips to False for pre, True for post
   report_tag: null                    # orchestrator sets 'pre' and 'post' at runtime
+
+cleanup:
+  report: "latest"           
+  report_tag: "pre"          
+  policy: "strict"           
+  why: "errors"              
+  dry_run: false
+  log_level: "INFO"
+  log_file: null
 
 resize:
   train_in: data/merged
