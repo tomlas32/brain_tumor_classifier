@@ -861,13 +861,31 @@ def to_dict(dc) -> Dict[str, Any]:
 
 def _flatten_to_overrides(d: dict) -> List[str]:
     """
-    Flatten a nested dict into dotted CLI-style overrides with YAML-encoded values.
-    Preserves types (lists, None, booleans, scientific notation) via yaml.safe_dump.
-    Example:
-        {"io": {"eval_out": "outputs/eval", "make_galleries": False}}
-        -> ["io.eval_out=outputs/eval", "io.make_galleries=false"]
+    Flatten a nested dict into dotted CLI-style overrides with stable, single-line values.
+    - Scalars (None, bool, int, float, str) are encoded without using PyYAML to avoid '...'.
+    - Collections (list/tuple/dict) use YAML flow style, then are cleaned to one line.
     """
     out: List[str] = []
+
+    def encode_scalar(v):
+        if v is None:
+            return "null"
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            # repr preserves scientific notation if already present
+            return repr(v)
+        if isinstance(v, str):
+            return v
+        # Fallback for any other scalar-ish types
+        return str(v)
+
+    def encode_any(v):
+        if isinstance(v, (list, tuple, dict)):
+            s = yaml.safe_dump(v, default_flow_style=True).strip()
+            # Ensure single-line, no YAML doc end markers
+            return s.replace("\n", " ").replace(" ...", "").replace("...", "").strip()
+        return encode_scalar(v)
 
     def rec(prefix: List[str], obj):
         if isinstance(obj, dict):
@@ -875,9 +893,7 @@ def _flatten_to_overrides(d: dict) -> List[str]:
                 rec(prefix + [k], v)
         else:
             key = ".".join(prefix)
-            # single-line YAML so lists/bools/null/1e-3 survive as proper types
-            val = yaml.safe_dump(obj, default_flow_style=True).strip()
-            val = val.replace("\n", " ")
+            val = encode_any(obj)
             out.append(f"{key}={val}")
 
     rec([], d or {})
