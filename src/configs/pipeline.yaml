@@ -76,15 +76,14 @@ split:
   dry_run: false
 
 train:
-  data: {}
+  data:
+    mapping_path: outputs/mappings/latest.json   # ← move it here
   train_in: data/training
   val_in: data/validation      # <<< add this
   val_frac: 0.0                # <<< disable internal split
   image_size: 224
   batch_size: 32
   num_workers: 4
-  mapping_path: outputs/mappings/latest.json
-
   aug:
     rotate_deg: 15
     hflip_prob: 0.5
