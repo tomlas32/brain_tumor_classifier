@@ -20,12 +20,60 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import copy
-import yaml  # PyYAML
+import yaml 
 
 from src.utils.paths import CONFIGS_DIR
 
-# ----------------------- Dataclasses (typed schema) ---------------------------
+# ----------------------- Stage Configs ---------------------------
 
+### Fetch Config
+@dataclass
+class FetchConfig:
+    """
+    Config for the 'fetch' stage.
+
+    Parameters
+    ----------
+    dataset : str | None
+        Kaggle slug 'owner/dataset'. If None, the script's CLI default is used.
+    cache_dir : Path | None
+        Destination cache dir for KaggleHub (defaults to DATA_DIR in fetch.py if None).
+    write_pointer : bool
+        Whether to write latest/history handoff JSONs.
+    pointer_dir : Path | None
+        Directory to place the handoff pointers. If None, uses the default
+        outputs/downloads_pointer/<owner>/<slug>/.
+    """
+    dataset: Optional[str] = None
+    cache_dir: Optional[Path] = None
+    write_pointer: bool = True
+    pointer_dir: Optional[Path] = None
+    dry_run: bool = False  # for testing
+
+def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> FetchConfig:
+    """
+    Build a FetchConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {"dataset": None, "cache_dir": None, "write_pointer": True, "pointer_dir": None}
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+    # Normalize Path-like fields
+    cache_dir = Path(base["cache_dir"]) if base.get("cache_dir") else None
+    pointer_dir = Path(base["pointer_dir"]) if base.get("pointer_dir") else None
+    return FetchConfig(
+        dataset=base.get("dataset"),
+        cache_dir=cache_dir,
+        write_pointer=bool(base.get("write_pointer", True)),
+        pointer_dir=pointer_dir,
+        dry_run=bool(base.get("dry_run", False)),
+    )
+
+
+### Merge Config
 @dataclass
 class MergeConfig:
     """
@@ -74,7 +122,7 @@ def build_merge_config(yaml_path: Optional[Path], overrides: List[str]) -> Merge
         dry_run=bool(base.get("dry_run", False)),
     )
 
-
+### Validate Config
 @dataclass
 class ValidateConfig:
     """
@@ -117,6 +165,93 @@ class ValidateConfig:
     dup_mode: str = "file"
 
 
+def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> ValidateConfig:
+    """
+    Build a ValidateConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {
+        "in_dir": None,
+        "index_remap": None,
+        "size": 224,
+        "exts": None,
+        "dup_check": False,
+        "warn_low_std": 3.0,
+        "min_file_bytes": 1024,
+        "fail_on": "error",
+        "write_report": True,
+        "dry_run": False,
+        "enforce_size": True,
+        "require_rgb": True,
+        "report_tag": None,
+        "dup_mode": "file",           # "file" | "content" | "both"
+    }
+
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    def _p(x): return Path(x) if x is not None else None
+
+    return ValidateConfig(
+        in_dir=_p(base.get("in_dir")),
+        index_remap=_p(base.get("index_remap")),
+        size=int(base.get("size", 224)),
+        exts=base.get("exts"),  
+        dup_check=bool(base.get("dup_check", False)),
+        warn_low_std=float(base.get("warn_low_std", 3.0)),
+        min_file_bytes=int(base.get("min_file_bytes", 1024)),
+        fail_on=str(base.get("fail_on", "error")),
+        mapping_pointer=_p(base.get("mapping_pointer")),
+        write_report=bool(base.get("write_report", True)),
+        dry_run=bool(base.get("dry_run", False)),
+        enforce_size=bool(base.get("enforce_size", True)),
+        require_rgb=bool(base.get("require_rgb", True)),
+        report_tag=base.get("report_tag"),
+        dup_mode=str(base.get("dup_mode", "file")),
+    )
+
+
+### Cleanup Config
+@dataclass
+class CleanupConfig:
+    stage: str = "cleanup"
+    report: str = "latest"
+    policy: str = "strict"       # strict | within_class | report_only
+    why: str = "errors"          # errors | warnings | both
+    dry_run: bool = False
+    log_level: str = "INFO"
+    log_file: Optional[str] = None
+    report_tag: Optional[str] = None
+
+def build_cleanup_config(config_file: Path | None, overrides: list[str] | None = None) -> CleanupConfig:
+    """
+    Build a CleanupConfig from YAML + overrides, consistent with other builders.
+    Priority: defaults < YAML < overrides.
+    """
+    base = _to_nested_dict(CleanupConfig())  # defaults
+
+    if config_file:
+        yaml_cfg = load_yaml_config(config_file)
+        _deep_update(base, yaml_cfg or {})
+
+    base = apply_overrides(base, overrides or [])
+
+    return CleanupConfig(
+        stage=str(base.get("stage", "cleanup")),
+        report=str(base.get("report", "latest")),
+        policy=str(base.get("policy", "strict")),
+        why=str(base.get("why", "errors")),
+        dry_run=bool(base.get("dry_run", False)),
+        log_level=str(base.get("log_level", "INFO")),
+        log_file=base.get("log_file"),
+        report_tag=base.get("report_tag"),
+    )
+
+
+### Resize Config
 @dataclass
 class ResizeConfig:
     """
@@ -141,6 +276,44 @@ class ResizeConfig:
     dry_run: bool = False  # for testing
 
 
+def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> ResizeConfig:
+    """
+    Build a ResizeConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = {
+        "train_in": None, "train_out": None,
+        "test_in": None,  "test_out": None,
+        "size": 224, "exts": None,
+    }
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    # Normalize paths if provided
+    def _p(x): return Path(x) if x is not None else None
+
+      # Normalize exts: allow comma string → list
+    exts_val = base.get("exts")
+    if isinstance(exts_val, str) and exts_val.lower() != "all":
+        # Split on commas and prepend dots if missing
+        parts = [e.strip() for e in exts_val.split(",") if e.strip()]
+        exts_val = [p if p.startswith(".") else f".{p}" for p in parts]
+
+    return ResizeConfig(
+        train_in=_p(base.get("train_in")),
+        train_out=_p(base.get("train_out")),
+        test_in=_p(base.get("test_in")),
+        test_out=_p(base.get("test_out")),
+        size=int(base.get("size", 224)),
+        exts=base.get("exts"),  
+        dry_run=bool(base.get("dry_run", False)),
+    )
+
+
+### Split Config
 @dataclass
 class SplitConfig:
     """
@@ -180,67 +353,55 @@ class SplitConfig:
     val_frac: float = 0.10
 
 
-@dataclass
-class FetchConfig:
+def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> SplitConfig:
     """
-    Config for the 'fetch' stage.
+    Build a SplitConfig from optional YAML + overrides.
 
-    Parameters
-    ----------
-    dataset : str | None
-        Kaggle slug 'owner/dataset'. If None, the script's CLI default is used.
-    cache_dir : Path | None
-        Destination cache dir for KaggleHub (defaults to DATA_DIR in fetch.py if None).
-    write_pointer : bool
-        Whether to write latest/history handoff JSONs.
-    pointer_dir : Path | None
-        Directory to place the handoff pointers. If None, uses the default
-        outputs/downloads_pointer/<owner>/<slug>/.
+    Priority: defaults < YAML < overrides.
     """
-    dataset: Optional[str] = None
-    cache_dir: Optional[Path] = None
-    write_pointer: bool = True
-    pointer_dir: Optional[Path] = None
-    dry_run: bool = False  # for testing
+    base = {
+        "dataset": None,
+        "pointer": None,
+        "test_frac": 0.20,
+        "val_frac": 0.10,
+        "seed": 42,
+        "clear_dest": False,
+        "exts": None,
+        "save_remap_to_project_root": False,
+        "mapping_use_dataset_subdir": False,
+        "mapping_write_split_copy": False,
+    }
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
 
-@dataclass
-class CleanupConfig:
-    stage: str = "cleanup"
-    report: str = "latest"
-    policy: str = "strict"       # strict | within_class | report_only
-    why: str = "errors"          # errors | warnings | both
-    dry_run: bool = False
-    log_level: str = "INFO"
-    log_file: Optional[str] = None
-    report_tag: Optional[str] = None
+    # Normalize path-like fields
+    pointer = Path(base["pointer"]) if base.get("pointer") else None
 
-def build_cleanup_config(config_file: Path | None, overrides: list[str] | None = None) -> CleanupConfig:
-    """
-    Build a CleanupConfig from a YAML file and optional overrides.
-    Mirrors the pattern used by other build_*_config functions.
-    """
-    raw = {}
-    if config_file:
-        raw = load_yaml_config(config_file)
+    # Normalize exts: allow comma string → list[str] with leading dots
+    exts_val = base.get("exts")
+    if isinstance(exts_val, str) and exts_val.lower() != "all":
+        parts = [e.strip() for e in exts_val.split(",") if e.strip()]
+        exts_val = [p if p.startswith(".") else f".{p}" for p in parts]
 
-    if overrides:
-        for ov in overrides:
-            if "=" not in ov:
-                continue
-            k, v = ov.split("=", 1)
-            raw[k.strip()] = v.strip()
-
-    return CleanupConfig(
-        stage=raw.get("stage", "cleanup"),
-        report=raw.get("report", "latest"),
-        policy=raw.get("policy", "strict"),
-        why=raw.get("why", "errors"),
-        dry_run=bool(raw.get("dry_run", False)),
-        log_level=raw.get("log_level", "INFO"),
-        log_file=raw.get("log_file"),
-        report_tag=raw.get("report_tag"),
+    return SplitConfig(
+        dataset=base.get("dataset"),
+        pointer=pointer,
+        test_frac=float(base.get("test_frac", 0.20)),
+        val_frac=float(base.get("val_frac", 0.10)),
+        seed=int(base.get("seed", 42)),
+        clear_dest=bool(base.get("clear_dest", False)),
+        exts=base.get("exts"),
+        save_remap_to_project_root=bool(base.get("save_remap_to_project_root", False)),
+        mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
+        mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
+        dry_run=bool(base.get("dry_run", False)),
     )
 
+
+
+# ----------------------- Shared Configs ---------------------------
 @dataclass
 class DataConfig:
     image_size: int = 224
@@ -272,7 +433,6 @@ class AugmentConfig:
     jitter_brightness: float = 0.1
     jitter_contrast: float = 0.1
 
-
 @dataclass
 class EarlyStoppingCfg:
     """
@@ -293,7 +453,6 @@ class EarlyStoppingCfg:
     patience: int = 5
     min_delta: float = 0.0
     monitor: str = "val_f1"
-
 
 @dataclass
 class CheckpointCfg:
@@ -316,7 +475,6 @@ class CheckpointCfg:
     every_n_epochs: int = 0
     out_dir: Optional[Path] = None
 
-
 @dataclass
 class LRLoggerCfg:
     """
@@ -331,7 +489,6 @@ class LRLoggerCfg:
     """
     enabled: bool = True
     out_json: Optional[Path] = None
-
 
 @dataclass
 class CallbacksConfig:
@@ -351,20 +508,16 @@ class CallbacksConfig:
     checkpoint: CheckpointCfg = field(default_factory=CheckpointCfg)
     lr_logger: LRLoggerCfg = field(default_factory=LRLoggerCfg)
 
-
-
 @dataclass
 class ModelConfig:
     name: str = "resnet18"            # resnet18|resnet34|resnet50
     pretrained: bool = True
     weights_path: Optional[Path] = None  # used for evaluation
 
-
 @dataclass
 class TrainLoopConfig:
     """Training loop settings."""
     epochs: int = 20
-
 
 @dataclass
 class OptimConfig:
@@ -374,12 +527,10 @@ class OptimConfig:
     gamma: float = 0.1
     amp: bool = True
 
-
 @dataclass
 class TrainIOConfig:
     out_models: Path = Path("models")
     out_summary: Path = Path("outputs/training")
-
 
 @dataclass
 class EvalIOConfig:
@@ -389,6 +540,7 @@ class EvalIOConfig:
     top_per_class: int = 6
 
 
+### Train Config
 @dataclass
 class TrainConfig:
     data: DataConfig = field(default_factory=DataConfig)
@@ -402,6 +554,39 @@ class TrainConfig:
     dry_run: bool = False
 
 
+def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> TrainConfig:
+    """
+    Build a TrainConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = _to_nested_dict(TrainConfig())  # defaults (now includes callbacks)
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+
+    # Rebuild nested callbacks block explicitly to ensure typed dataclasses
+    cb = base.get("callbacks", {}) or {}
+    callbacks = CallbacksConfig(
+        early_stopping=EarlyStoppingCfg(**(cb.get("early_stopping", {}) or {})),
+        checkpoint=CheckpointCfg(**(cb.get("checkpoint", {}) or {})),
+        lr_logger=LRLoggerCfg(**(cb.get("lr_logger", {}) or {})),
+    )
+
+    return TrainConfig(
+        data=DataConfig(**base.get("data", {})),
+        model=ModelConfig(**base.get("model", {})),
+        optim=OptimConfig(**base.get("optim", {})),
+        io=TrainIOConfig(**base.get("io", {})),
+        loop=TrainLoopConfig(**base.get("loop", {})),
+        aug=AugmentConfig(**base.get("aug", {})),
+        callbacks=callbacks, 
+        run_id=base.get("run_id"),
+        dry_run=bool(base.get("dry_run", False)),
+    )
+
+### Eval Config
 @dataclass
 class EvalConfig:
     data: DataConfig = field(default_factory=DataConfig)
@@ -409,6 +594,27 @@ class EvalConfig:
     io: EvalIOConfig = field(default_factory=EvalIOConfig)
     run_id: Optional[str] = None
     dry_run: bool = False
+
+
+def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalConfig:
+    """
+    Build an EvalConfig from optional YAML + overrides.
+
+    Priority: defaults < YAML < overrides.
+    """
+    base = _to_nested_dict(EvalConfig())  # defaults
+    if yaml_path:
+        yaml_cfg = load_yaml_config(yaml_path)
+        _deep_update(base, yaml_cfg)
+    base = apply_overrides(base, overrides)
+    return EvalConfig(
+        data=DataConfig(**base.get("data", {})),
+        model=ModelConfig(**base.get("model", {})),
+        io=EvalIOConfig(**base.get("io", {})),
+        run_id=base.get("run_id"),
+        dry_run=bool(base.get("dry_run", False)),
+    )
+
 
 @dataclass
 class EnvConfig:
@@ -555,7 +761,7 @@ def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> Mast
         ),
     )
 
-# ----------------------- Loader / overrides / utils ---------------------------
+# ----------------------- Utils ---------------------------
 
 def _deep_update(dst: dict, src: dict) -> dict:
     """Recursively merge dict `src` into dict `dst` (in place) and return dst."""
@@ -575,15 +781,6 @@ def _to_nested_dict(obj) -> dict:
         return copy.deepcopy(obj)
     raise TypeError(f"Unsupported config type: {type(obj)}")
 
-
-# src/core/config.py
-from pathlib import Path
-import yaml
-
-# ✅ use your central paths
-from src.utils.paths import PROJECT_ROOT, CONFIGS_DIR  # already defined globally
-# PROJECT_ROOT = Path(__file__).resolve().parents[2]
-# CONFIGS_DIR  = PROJECT_ROOT / "configs"  (from your utils)  ← cited
 
 def load_yaml_config(path: str | Path) -> dict:
     """
@@ -621,45 +818,28 @@ def load_yaml_config(path: str | Path) -> dict:
     )
 
 
-
 def apply_overrides(base: dict, overrides: List[str]) -> dict:
     """
     Apply CLI overrides of the form 'a.b.c=value' to a nested dict.
 
-    Supported value parsing: bool, int, float, null, strings.
-    Examples:
-        model.name=resnet50
-        optim.lr=3e-4
-        io.eval_out=outputs/eval_x
-        data.seed=1337
-        io.make_galleries=false
-
-    Returns
-    -------
-    dict
-        Mutated copy of base with overrides applied.
+    Value parsing:
+      - Prefer yaml.safe_load(raw) to support lists/dicts/bools/null & 1e-3
+      - Fall back to the raw string if YAML parsing fails.
     """
     out = copy.deepcopy(base)
 
-    def parse_scalar(s: str):
-        low = s.lower()
-        if low in ("true", "false"):
-            return low == "true"
-        if low in ("null", "none"):
-            return None
+    def parse_value(raw: str):
         try:
-            if "." in s:
-                return float(s)
-            return int(s)
-        except ValueError:
-            return s
+            return yaml.safe_load(raw)
+        except Exception:
+            return raw  # last resort
 
     for ov in overrides or []:
         if "=" not in ov:
             raise ValueError(f"Override must be key=value: '{ov}'")
         key, raw = ov.split("=", 1)
         path = key.split(".")
-        val = parse_scalar(raw)
+        val = parse_value(raw)
 
         cursor = out
         for p in path[:-1]:
@@ -669,199 +849,6 @@ def apply_overrides(base: dict, overrides: List[str]) -> dict:
         cursor[path[-1]] = val
 
     return out
-
-
-def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> TrainConfig:
-    """
-    Build a TrainConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-    """
-    base = _to_nested_dict(TrainConfig())  # defaults (now includes callbacks)
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg)
-    base = apply_overrides(base, overrides)
-
-    # Rebuild nested callbacks block explicitly to ensure typed dataclasses
-    cb = base.get("callbacks", {}) or {}
-    callbacks = CallbacksConfig(
-        early_stopping=EarlyStoppingCfg(**(cb.get("early_stopping", {}) or {})),
-        checkpoint=CheckpointCfg(**(cb.get("checkpoint", {}) or {})),
-        lr_logger=LRLoggerCfg(**(cb.get("lr_logger", {}) or {})),
-    )
-
-    return TrainConfig(
-        data=DataConfig(**base.get("data", {})),
-        model=ModelConfig(**base.get("model", {})),
-        optim=OptimConfig(**base.get("optim", {})),
-        io=TrainIOConfig(**base.get("io", {})),
-        loop=TrainLoopConfig(**base.get("loop", {})),
-        aug=AugmentConfig(**base.get("aug", {})),
-        callbacks=callbacks, 
-        run_id=base.get("run_id"),
-        dry_run=bool(base.get("dry_run", False)),
-    )
-
-def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> FetchConfig:
-    """
-    Build a FetchConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-    """
-    base = {"dataset": None, "cache_dir": None, "write_pointer": True, "pointer_dir": None}
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg)
-    base = apply_overrides(base, overrides)
-    # Normalize Path-like fields
-    cache_dir = Path(base["cache_dir"]) if base.get("cache_dir") else None
-    pointer_dir = Path(base["pointer_dir"]) if base.get("pointer_dir") else None
-    return FetchConfig(
-        dataset=base.get("dataset"),
-        cache_dir=cache_dir,
-        write_pointer=bool(base.get("write_pointer", True)),
-        pointer_dir=pointer_dir,
-        dry_run=bool(base.get("dry_run", False)),
-    )
-
-
-def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalConfig:
-    """
-    Build an EvalConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-    """
-    base = _to_nested_dict(EvalConfig())  # defaults
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg)
-    base = apply_overrides(base, overrides)
-    return EvalConfig(
-        data=DataConfig(**base.get("data", {})),
-        model=ModelConfig(**base.get("model", {})),
-        io=EvalIOConfig(**base.get("io", {})),
-        run_id=base.get("run_id"),
-        dry_run=bool(base.get("dry_run", False)),
-    )
-
-def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> SplitConfig:
-    """
-    Build a SplitConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-    """
-    base = {
-        "dataset": None,
-        "pointer": None,
-        "test_frac": 0.20,
-        "val_frac": 0.10,
-        "seed": 42,
-        "clear_dest": False,
-        "exts": None,
-        "save_remap_to_project_root": False,
-        "mapping_use_dataset_subdir": False,
-        "mapping_write_split_copy": False,
-    }
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg)
-    base = apply_overrides(base, overrides)
-
-    # Normalize path-like fields
-    pointer = Path(base["pointer"]) if base.get("pointer") else None
-
-    return SplitConfig(
-        dataset=base.get("dataset"),
-        pointer=pointer,
-        test_frac=float(base.get("test_frac", 0.20)),
-        val_frac=float(base.get("val_frac", 0.10)),
-        seed=int(base.get("seed", 42)),
-        clear_dest=bool(base.get("clear_dest", False)),
-        exts=base.get("exts"),
-        save_remap_to_project_root=bool(base.get("save_remap_to_project_root", False)),
-        mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
-        mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
-        dry_run=bool(base.get("dry_run", False)),
-    )
-
-
-def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> ResizeConfig:
-    """
-    Build a ResizeConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-    """
-    base = {
-        "train_in": None, "train_out": None,
-        "test_in": None,  "test_out": None,
-        "size": 224, "exts": None,
-    }
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg)
-    base = apply_overrides(base, overrides)
-
-    # Normalize paths if provided
-    def _p(x): return Path(x) if x is not None else None
-    return ResizeConfig(
-        train_in=_p(base.get("train_in")),
-        train_out=_p(base.get("train_out")),
-        test_in=_p(base.get("test_in")),
-        test_out=_p(base.get("test_out")),
-        size=int(base.get("size", 224)),
-        exts=base.get("exts"),  
-        dry_run=bool(base.get("dry_run", False)),
-    )
-
-def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> ValidateConfig:
-    """
-    Build a ValidateConfig from optional YAML + overrides.
-
-    Priority: defaults < YAML < overrides.
-    """
-    base = {
-        "in_dir": None,
-        "index_remap": None,
-        "size": 224,
-        "exts": None,
-        "dup_check": False,
-        "warn_low_std": 3.0,
-        "min_file_bytes": 1024,
-        "fail_on": "error",
-        "write_report": True,
-        "dry_run": False,
-        "enforce_size": True,
-        "require_rgb": True,
-        "report_tag": None,
-        "dup_mode": "file",           # "file" | "content" | "both"
-    }
-
-    if yaml_path:
-        yaml_cfg = load_yaml_config(yaml_path)
-        _deep_update(base, yaml_cfg)
-    base = apply_overrides(base, overrides)
-
-    def _p(x): return Path(x) if x is not None else None
-
-    return ValidateConfig(
-        in_dir=_p(base.get("in_dir")),
-        index_remap=_p(base.get("index_remap")),
-        size=int(base.get("size", 224)),
-        exts=base.get("exts"),  
-        dup_check=bool(base.get("dup_check", False)),
-        warn_low_std=float(base.get("warn_low_std", 3.0)),
-        min_file_bytes=int(base.get("min_file_bytes", 1024)),
-        fail_on=str(base.get("fail_on", "error")),
-        mapping_pointer=_p(base.get("mapping_pointer")),
-        write_report=bool(base.get("write_report", True)),
-        dry_run=bool(base.get("dry_run", False)),
-        enforce_size=bool(base.get("enforce_size", True)),
-        require_rgb=bool(base.get("require_rgb", True)),
-        report_tag=base.get("report_tag"),
-        dup_mode=str(base.get("dup_mode", "file")),
-    )
-
 
 def to_dict(dc) -> Dict[str, Any]:
     """Dataclass → plain dict (for logging/manifests)."""
