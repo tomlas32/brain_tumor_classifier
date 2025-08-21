@@ -27,7 +27,7 @@ Version: 1.3
 """
 
 from pathlib import Path
-import argparse, random, shutil
+import argparse, random, shutil, os
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List
@@ -153,7 +153,8 @@ def main(argv=None) -> int:
     # Logging
     log_level = getattr(args, "log_level", "INFO")
     log_file = getattr(args, "log_file", None)
-    configure_logging(level=log_level, log_file=log_file)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    configure_logging(log_level=log_level, log_file=log_file, run_id=run_id, stage="split")
     log.info("split.dispatch", extra={"argv": argv})
 
     # Resolve config
@@ -271,7 +272,7 @@ def main(argv=None) -> int:
         })
 
     # Mapping (index_remap + pointer)
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    
     latest_map_path = _write_index_and_pointer(
         classes=_class_names_from_dir(train_out),
         run_id=run_id,

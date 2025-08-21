@@ -113,6 +113,8 @@ class ValidateConfig:
     enforce_size: bool = True
     require_rgb: bool = True
     report_tag: Optional[str] = None  # "pre" | "post" | None
+    # How to detect duplicates: "file" (bytes), "content" (RGB+resize), or "both"
+    dup_mode: str = "file"
 
 
 @dataclass
@@ -832,6 +834,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         "enforce_size": True,
         "require_rgb": True,
         "report_tag": None,
+        "dup_mode": "file",           # "file" | "content" | "both"
     }
 
     if yaml_path:
@@ -856,6 +859,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         enforce_size=bool(base.get("enforce_size", True)),
         require_rgb=bool(base.get("require_rgb", True)),
         report_tag=base.get("report_tag"),
+        dup_mode=str(base.get("dup_mode", "file")),
     )
 
 

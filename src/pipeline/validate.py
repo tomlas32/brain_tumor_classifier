@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import json
 import hashlib
-import time, argparse, os
+import time, argparse, os, cv2
 from pathlib import Path
 from typing import Dict, Tuple, Set
 
@@ -56,6 +56,7 @@ from src.utils.paths import DATA_DIR, OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
 from src.core.mapping import read_index_remap, expected_classes_from_remap
 from src.core.config import build_validate_config, to_dict
 from src.core.artifacts import read_mapping_pointer
+from src.pipeline.resize import resize_and_pad
 
 VALIDATION_REPORTS_DIR = OUTPUTS_DIR / "validation_reports"
 
@@ -101,6 +102,37 @@ def _file_sha1(p: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+def _encoded_output_sha1(p: Path, size: int = 224) -> str:
+    """
+    Hash the BYTES that resize.py would actually write:
+      1) read with cv2
+      2) resize_and_pad(...)  -> identical normalization
+      3) encode using the same format implied by the source suffix (jpg/png)
+      4) SHA-1 over the encoded byte buffer
+    """
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+
+    sq = resize_and_pad(img, size=size)  # same as resize stage
+    ext = p.suffix.lower()
+
+    # choose encoder by source suffix (resize preserves the original extension)
+    if ext in (".jpg", ".jpeg"):
+        ok, buf = cv2.imencode(".jpg", sq, [int(cv2.IMWRITE_JPEG_QUALITY), 95])  # OpenCV default
+    elif ext == ".png":
+        ok, buf = cv2.imencode(".png", sq, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])  # OpenCV default
+    else:
+        # fallback: treat as JPEG to approximate cv2.imwrite behavior for other 3‑channel formats
+        ok, buf = cv2.imencode(".jpg", sq, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+    if not ok:
+        raise ValueError(f"cv2.imencode failed for {p} ({ext})")
+
+    h = hashlib.sha1()
+    h.update(buf.tobytes())
+    return h.hexdigest()
+
 
 def validate_dataset(
     in_dir: str | Path = MERGED_DIR,
@@ -141,7 +173,9 @@ def validate_dataset(
     n_errors = 0
     n_warnings = 0
     per_class_counts: Dict[str, int] = {}
-    seen_hashes: Dict[str, Path] = {}
+
+    seen_file_hashes: Dict[str, Path] = {}
+    seen_content_hashes: Dict[str, Path] = {}
 
     errors_by_type = defaultdict(int)
     warnings_by_type = defaultdict(int)
@@ -268,17 +302,42 @@ def validate_dataset(
         # Duplicate detection (optional)
         if dup_check:
             try:
-                sig = _file_sha1(p)
-                if sig in seen_hashes:
-                    first = seen_hashes[sig]
-                    log.error(f"[DUPLICATE] {p} dup of {first}")
+                file_sig = _file_sha1(p)                       # exact file bytes
+                content_sig = _encoded_output_sha1(p, size=size)  # normalized pixels
+
+                is_file_dup = file_sig in seen_file_hashes
+                is_content_dup = content_sig in seen_content_hashes
+
+                dup_hit = False
+                first_path: Path | None = None
+                used_sig = None
+
+                if is_file_dup:
+                    dup_hit = True
+                    first_path = seen_file_hashes[file_sig]
+                    used_sig = file_sig
+                elif is_content_dup:
+                    dup_hit = True
+                    first_path = seen_content_hashes[content_sig]
+                    used_sig = content_sig
+
+                if dup_hit and first_path is not None:
+                    log.error(f"[DUPLICATE] {p} dup of {first_path}")
                     n_errors += 1
-                    _record("error", "DUPLICATE", p, label=label, sha1=sig, duplicate_of=str(first))
-                    dup_groups.setdefault(sig, [str(first)])
-                    if str(p) not in dup_groups[sig]:
-                        dup_groups[sig].append(str(p))
+                    _record(
+                        "error", "DUPLICATE", p, label=label,
+                        sha1=used_sig,                     # key used by cleanup
+                        duplicate_of=str(first_path),
+                        details={"file_sha1": file_sig, "content_sha1": content_sig, "mode": "both"},
+                    )
+                    dup_groups.setdefault(used_sig, [str(first_path)])
+                    if str(p) not in dup_groups[used_sig]:
+                        dup_groups[used_sig].append(str(p))
                 else:
-                    seen_hashes[sig] = p
+                    # mark first occurrences
+                    seen_file_hashes.setdefault(file_sig, p)
+                    seen_content_hashes.setdefault(content_sig, p)
+
             except Exception as e:
                 log.warning(f"[HASH_FAIL] {p} - {e}")
                 n_warnings += 1
