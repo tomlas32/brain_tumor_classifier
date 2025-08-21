@@ -574,17 +574,27 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         lr_logger=LRLoggerCfg(**(cb.get("lr_logger", {}) or {})),
     )
 
+    # Normalize path-like fields inside io block
+    io_block = base.get("io", {}) or {}
+    out_models = io_block.get("out_models")
+    out_summary = io_block.get("out_summary")
+    if isinstance(out_models, str):
+        io_block["out_models"] = Path(out_models)
+    if isinstance(out_summary, str):
+        io_block["out_summary"] = Path(out_summary)
+
     return TrainConfig(
         data=DataConfig(**base.get("data", {})),
         model=ModelConfig(**base.get("model", {})),
         optim=OptimConfig(**base.get("optim", {})),
-        io=TrainIOConfig(**base.get("io", {})),
+        io=TrainIOConfig(**io_block),
         loop=TrainLoopConfig(**base.get("loop", {})),
         aug=AugmentConfig(**base.get("aug", {})),
-        callbacks=callbacks, 
+        callbacks=callbacks,
         run_id=base.get("run_id"),
         dry_run=bool(base.get("dry_run", False)),
     )
+
 
 ### Eval Config
 @dataclass
