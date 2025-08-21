@@ -216,7 +216,8 @@ def show_gradcam_gallery(
         return None
 
     _ensure_dir(save_dir)
-    model.eval()
+
+    model.to(device).eval() 
 
     # Reuse eval transform if possible; otherwise fallback
     eval_tf = getattr(ds_for_transform, "transform", None)
@@ -228,50 +229,57 @@ def show_gradcam_gallery(
     if tlayer is None:
         log.warning("viz.warning.no_target_layer", extra={"title": title, "note": "Could not infer a conv layer"})
         return None
+    
+    # Ensure the chosen conv layer’s parameters allow grads
+    for p in tlayer.parameters(recurse=True):
+        p.requires_grad_(True)
 
-    cam = GradCAM(model=model, target_layers=[tlayer], use_cuda=(device.type == "cuda"))
+    with GradCAM(model=model, target_layers=[tlayer]) as cam:
 
-    cols = max(1, int(cols))
-    rows = math.ceil(len(predictions) / cols)
-    fig = plt.figure(figsize=(cols * 3.0, rows * 3.0))
-    fig.suptitle(title, fontsize=14, y=0.98)
+        cols = max(1, int(cols))
+        rows = math.ceil(len(predictions) / cols)
+        fig = plt.figure(figsize=(cols * 3.0, rows * 3.0))
+        fig.suptitle(title, fontsize=14, y=0.98)
 
-    rendered = 0
-    for i, item in enumerate(predictions):
-        path = item.get("path")
-        pil = _open_rgb(path)
-        ax = fig.add_subplot(rows, cols, i + 1)
-        if pil is None:
+        rendered = 0
+        for i, item in enumerate(predictions):
+            path = item.get("path")
+            pil = _open_rgb(path)
+            ax = fig.add_subplot(rows, cols, i + 1)
+            if pil is None:
+                ax.axis("off")
+                continue
+
+            # For CAM overlay, we need both the original RGB (float[0,1]) and the normalized tensor
+            rgb_float = _pil_to_numpy_float01(pil.resize((image_size, image_size), Image.BILINEAR))
+
+            # Run transform pipeline → 1xCxHxW tensor
+            x = eval_tf(pil).unsqueeze(0).to(device)
+
+            with torch.enable_grad():  # <-- enable autograd for CAM
+                x = x.requires_grad_(True)   # ensure grads can flow from inputs
+                targets = None  # or: [ClassifierOutputTarget(int(item["pred"]))] if you prefer predicted-class CAM
+                grayscale_cam = cam(input_tensor=x, targets=targets)[0]  # HxW
+
+
+            # Create overlay
+            overlay = show_cam_on_image(rgb_float, grayscale_cam, use_rgb=True)  # uint8
+            overlay_img = Image.fromarray(overlay)
+
+            ax.imshow(overlay_img)
+            ax.set_title(_make_title(item, class_names), fontsize=9)
             ax.axis("off")
-            continue
+            rendered += 1
 
-        # For CAM overlay, we need both the original RGB (float[0,1]) and the normalized tensor
-        rgb_float = _pil_to_numpy_float01(pil.resize((image_size, image_size), Image.BILINEAR))
+        if rendered == 0:
+            plt.close(fig)
+            log.info("viz.warning.empty_gallery", extra={"title": title})
+            return None
 
-        # Run transform pipeline → 1xCxHxW tensor
-        x = eval_tf(pil).unsqueeze(0).to(device)
-        with torch.inference_mode():
-            targets = None  # default: strongest class in forward pass
-            grayscale_cam = cam(input_tensor=x, targets=targets)[0]  # HxW
-
-        # Create overlay
-        overlay = show_cam_on_image(rgb_float, grayscale_cam, use_rgb=True)  # uint8
-        overlay_img = Image.fromarray(overlay)
-
-        ax.imshow(overlay_img)
-        ax.set_title(_make_title(item, class_names), fontsize=9)
-        ax.axis("off")
-        rendered += 1
-
-    if rendered == 0:
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        out_path = save_dir / f"{title}.png"
+        fig.savefig(out_path, dpi=120)
         plt.close(fig)
-        log.info("viz.warning.empty_gallery", extra={"title": title})
-        return None
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    out_path = save_dir / f"{title}.png"
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-
-    log.info("gradcam.saved", extra={"path": str(out_path), "count": int(rendered), "title": title})
-    return out_path
+        log.info("gradcam.saved", extra={"path": str(out_path), "count": int(rendered), "title": title})
+        return out_path

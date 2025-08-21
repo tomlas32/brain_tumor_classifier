@@ -230,6 +230,9 @@ def main(argv=None) -> int:
     val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None
     val_frac_effective = 0.0 if val_in else cfg.data.val_frac
 
+
+    out_models  = Path(cfg.io.out_models)  if not isinstance(cfg.io.out_models, Path)  else cfg.io.out_models
+    out_summary = Path(cfg.io.out_summary) if not isinstance(cfg.io.out_summary, Path) else cfg.io.out_summary
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
         image_size=cfg.data.image_size,
@@ -247,8 +250,8 @@ def main(argv=None) -> int:
         step_size=cfg.optim.step_size,
         gamma=cfg.optim.gamma,
         amp=cfg.optim.amp,
-        out_models=Path(cfg.io.out_models),
-        out_summary=Path(cfg.io.out_summary),
+        out_models=out_models,
+        out_summary=out_summary,
         index_remap=Path(mapping_path),  
         run_id=cfg.run_id or run_id,
         args_dict=to_dict(cfg),
