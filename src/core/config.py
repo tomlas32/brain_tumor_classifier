@@ -617,10 +617,32 @@ def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalCo
         yaml_cfg = load_yaml_config(yaml_path)
         _deep_update(base, yaml_cfg)
     base = apply_overrides(base, overrides)
+
+    # Normalize path-like fields that may come in as strings
+    model_block = base.get("model", {}) or {}
+    io_block = base.get("io", {}) or {}
+    data_block = base.get("data", {}) or {}
+
+    wp = model_block.get("weights_path")
+    if isinstance(wp, str):
+        model_block["weights_path"] = Path(wp)
+
+    eo = io_block.get("eval_out")
+    if isinstance(eo, str):
+        io_block["eval_out"] = Path(eo)
+
+    mp = data_block.get("mapping_path")
+    if isinstance(mp, str):
+        data_block["mapping_path"] = Path(mp)
+
+    mptr = data_block.get("mapping_pointer")
+    if isinstance(mptr, str):
+        data_block["mapping_pointer"] = Path(mptr)
+
     return EvalConfig(
-        data=DataConfig(**base.get("data", {})),
-        model=ModelConfig(**base.get("model", {})),
-        io=EvalIOConfig(**base.get("io", {})),
+        data=DataConfig(**data_block),
+        model=ModelConfig(**model_block),
+        io=EvalIOConfig(**io_block),
         run_id=base.get("run_id"),
         dry_run=bool(base.get("dry_run", False)),
     )
