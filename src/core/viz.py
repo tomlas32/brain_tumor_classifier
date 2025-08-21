@@ -21,6 +21,7 @@ import io
 import math
 import numpy as np
 from PIL import Image
+from contextlib import nullcontext
 
 import matplotlib
 matplotlib.use("Agg")  # headless-safe
@@ -233,9 +234,16 @@ def show_gradcam_gallery(
     # Ensure the chosen conv layer’s parameters allow grads
     for p in tlayer.parameters(recurse=True):
         p.requires_grad_(True)
+    
 
-    with GradCAM(model=model, target_layers=[tlayer]) as cam:
 
+    # Wrap GradCAM to support both real and mocked backends:
+    # - pytorch-grad-cam ≥1.3 implements context manager (__enter__/__exit__).
+    # - our unit tests use a FakeGradCAM without CM methods.
+    # Use nullcontext fallback so both work seamlessly.
+    cam_obj = GradCAM(model=model, target_layers=[tlayer])
+    cam_cm = cam_obj if hasattr(cam_obj, "__enter__") else nullcontext(cam_obj)
+    with cam_cm as cam:
         cols = max(1, int(cols))
         rows = math.ceil(len(predictions) / cols)
         fig = plt.figure(figsize=(cols * 3.0, rows * 3.0))
