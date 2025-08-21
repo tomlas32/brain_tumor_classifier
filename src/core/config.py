@@ -164,7 +164,6 @@ class ValidateConfig:
     # How to detect duplicates: "file" (bytes), "content" (RGB+resize), or "both"
     dup_mode: str = "file"
 
-
 def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> ValidateConfig:
     """
     Build a ValidateConfig from optional YAML + overrides.
@@ -275,7 +274,6 @@ class ResizeConfig:
     exts: Optional[object] = None  # list[str] | 'all' | None
     dry_run: bool = False  # for testing
 
-
 def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> ResizeConfig:
     """
     Build a ResizeConfig from optional YAML + overrides.
@@ -295,7 +293,7 @@ def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> Resi
     # Normalize paths if provided
     def _p(x): return Path(x) if x is not None else None
 
-      # Normalize exts: allow comma string → list
+    # Normalize exts: allow comma string → list
     exts_val = base.get("exts")
     if isinstance(exts_val, str) and exts_val.lower() != "all":
         # Split on commas and prepend dots if missing
@@ -308,7 +306,7 @@ def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> Resi
         test_in=_p(base.get("test_in")),
         test_out=_p(base.get("test_out")),
         size=int(base.get("size", 224)),
-        exts=base.get("exts"),  
+        exts=exts_val,  
         dry_run=bool(base.get("dry_run", False)),
     )
 
@@ -352,7 +350,6 @@ class SplitConfig:
     dry_run: bool = False  # for testing
     val_frac: float = 0.10
 
-
 def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> SplitConfig:
     """
     Build a SplitConfig from optional YAML + overrides.
@@ -392,7 +389,7 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
         val_frac=float(base.get("val_frac", 0.10)),
         seed=int(base.get("seed", 42)),
         clear_dest=bool(base.get("clear_dest", False)),
-        exts=base.get("exts"),
+        exts=exts_val,
         save_remap_to_project_root=bool(base.get("save_remap_to_project_root", False)),
         mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
         mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
@@ -553,7 +550,6 @@ class TrainConfig:
     run_id: Optional[str] = None
     dry_run: bool = False
 
-
 def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> TrainConfig:
     """
     Build a TrainConfig from optional YAML + overrides.
@@ -604,7 +600,6 @@ class EvalConfig:
     io: EvalIOConfig = field(default_factory=EvalIOConfig)
     run_id: Optional[str] = None
     dry_run: bool = False
-
 
 def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalConfig:
     """
@@ -685,6 +680,7 @@ class LoggingConfig:
     file: Optional[str] = None
     json: bool = False
 
+
 @dataclass
 class MasterConfig:
     """
@@ -721,79 +717,55 @@ class MasterConfig:
     train: "TrainConfig" = field(default_factory=lambda: TrainConfig())
     evaluate: "EvalConfig" = field(default_factory=lambda: EvalConfig())
 
-
 def build_master_config(yaml_path: Optional[Path], overrides: List[str]) -> MasterConfig:
     """
     Build a MasterConfig from optional YAML + overrides.
 
-    Priority: defaults < YAML < overrides.
-
-    Parameters
-    ----------
-    yaml_path : Optional[Path]
-        Path to a master YAML. If None, defaults are used and only overrides apply.
-    overrides : list[str]
-        Dotted key overrides, e.g.:
-        - "train.data.image_size=256"
-        - "resize.size=224"
-        - "log.level=DEBUG"
-        - "env.seed=1337"
-
-    Returns
-    -------
-    MasterConfig
-        Fully materialized master config object.
-
-    Logging
-    -------
-    This function does not log; the caller (orchestrator) should log:
-      log.info("config.resolved", extra={"config": to_dict(master_cfg)})
+    Strategy:
+      1) Merge defaults + YAML + CLI into dict `base`
+      2) Build each stage by delegating to its build_*_config with flattened overrides
+         (so we reuse per-stage normalization like Path casting and exts handling).
     """
-    # Start from defaults of the full master structure
-    base = _to_nested_dict(MasterConfig())  # uses asdict on all nested dataclasses
+    # 1) Start from defaults of the full master structure
+    base = _to_nested_dict(MasterConfig())
 
-    # Merge YAML (if provided)
+    # 2) Merge YAML (if provided)
     if yaml_path:
         yaml_cfg = load_yaml_config(yaml_path)
         _deep_update(base, yaml_cfg or {})
 
-    # Apply CLI overrides last
+    # 3) Apply CLI overrides last
     base = apply_overrides(base, overrides or [])
 
-    # Reconstruct nested dataclasses from the merged dict
+    # 4) Build each stage using its dedicated builder (reuses all normalization)
+    fetch_cfg    = build_fetch_config   (None, _flatten_to_overrides(base.get("fetch", {})))
+    merge_cfg    = build_merge_config   (None, _flatten_to_overrides(base.get("merge", {})))
+    split_cfg    = build_split_config   (None, _flatten_to_overrides(base.get("split", {})))
+    resize_cfg   = build_resize_config  (None, _flatten_to_overrides(base.get("resize", {})))
+    validate_cfg = build_validate_config(None, _flatten_to_overrides(base.get("validate", {})))
+    cleanup_cfg  = build_cleanup_config (None, _flatten_to_overrides(base.get("cleanup", {})))
+    train_cfg    = build_train_config   (None, _flatten_to_overrides(base.get("train", {})))
+    eval_cfg     = build_eval_config    (None, _flatten_to_overrides(base.get("evaluate", {})))
+
+    # 5) Top-level blocks (not stage-specific)
+    env_cfg = EnvConfig(**base.get("env", {}))
+    log_cfg = LoggingConfig(**base.get("log", {}))
+
     return MasterConfig(
         run_id=base.get("run_id"),
-        env=EnvConfig(**base.get("env", {})),
-        log=LoggingConfig(**base.get("log", {})),
-        fetch=FetchConfig(**base.get("fetch", {})),
-        merge=MergeConfig(**base.get("merge", {})),
-        split=SplitConfig(**base.get("split", {})),
-        resize=ResizeConfig(**base.get("resize", {})),
-        validate=ValidateConfig(**base.get("validate", {})),
-        cleanup=CleanupConfig(**base.get("cleanup", {})), 
-        train=TrainConfig(
-            data=DataConfig(**((base.get("train", {}).get("data")) or {})),
-            model=ModelConfig(**((base.get("train", {}).get("model")) or {})),
-            optim=OptimConfig(**((base.get("train", {}).get("optim")) or {})),
-            io=TrainIOConfig(**((base.get("train", {}).get("io")) or {})),
-            loop=TrainLoopConfig(**((base.get("train", {}).get("loop")) or {})),
-            aug=AugmentConfig(**((base.get("train", {}).get("aug")) or {})),
-            callbacks=CallbacksConfig(
-                early_stopping=EarlyStoppingCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("early_stopping") or {})),
-                checkpoint=CheckpointCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("checkpoint") or {})),
-                lr_logger=LRLoggerCfg(**((base.get("train", {}).get("callbacks", {}) or {}).get("lr_logger") or {})),
-            ),
-            run_id=base.get("train", {}).get("run_id"),
-        ),
-        evaluate=EvalConfig(
-            data=DataConfig(**base.get("evaluate", {}).get("data", {})),
-            model=ModelConfig(**base.get("evaluate", {}).get("model", {})),
-            io=EvalIOConfig(**base.get("evaluate", {}).get("io", {})),
-            run_id=base.get("evaluate", {}).get("run_id"),
-        ),
+        env=env_cfg,
+        log=log_cfg,
+        fetch=fetch_cfg,
+        merge=merge_cfg,
+        split=split_cfg,
+        resize=resize_cfg,
+        validate=validate_cfg,
+        cleanup=cleanup_cfg,
+        train=train_cfg,
+        evaluate=eval_cfg,
     )
 
-# ----------------------- Utils ---------------------------
+# ====================== Utils ======================
 
 def _deep_update(dst: dict, src: dict) -> dict:
     """Recursively merge dict `src` into dict `dst` (in place) and return dst."""
@@ -885,3 +857,28 @@ def apply_overrides(base: dict, overrides: List[str]) -> dict:
 def to_dict(dc) -> Dict[str, Any]:
     """Dataclass → plain dict (for logging/manifests)."""
     return asdict(dc)
+
+
+def _flatten_to_overrides(d: dict) -> List[str]:
+    """
+    Flatten a nested dict into dotted CLI-style overrides with YAML-encoded values.
+    Preserves types (lists, None, booleans, scientific notation) via yaml.safe_dump.
+    Example:
+        {"io": {"eval_out": "outputs/eval", "make_galleries": False}}
+        -> ["io.eval_out=outputs/eval", "io.make_galleries=false"]
+    """
+    out: List[str] = []
+
+    def rec(prefix: List[str], obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                rec(prefix + [k], v)
+        else:
+            key = ".".join(prefix)
+            # single-line YAML so lists/bools/null/1e-3 survive as proper types
+            val = yaml.safe_dump(obj, default_flow_style=True).strip()
+            val = val.replace("\n", " ")
+            out.append(f"{key}={val}")
+
+    rec([], d or {})
+    return out
