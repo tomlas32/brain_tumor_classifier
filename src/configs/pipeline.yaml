@@ -83,7 +83,7 @@ train:
   image_size: 224
   batch_size: 32
   num_workers: 4
-  mapping_pointer: outputs/pointers/mapping/<owner>/<slug>/latest.json
+  mapping_path: outputs/mappings/latest.json
 
   aug:
     rotate_deg: 15
