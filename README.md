@@ -210,7 +210,7 @@ Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 an
    ```bash
    python -m src.cli merge --config src/configs/merge.yaml
    ```
-3. **Pre-validate** images (orchestrator sets **report_tag=pre**) 
+3. **Pre-validate** images (orchestrator sets `report_tag=pre`) 
    ```bash
    python -m src.cli validate --config src/configs/validate.yaml
    ```
@@ -222,7 +222,7 @@ Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 an
    ```bash
    python -m src.cli resize --config src/configs/resize.yaml
    ```
-6. **Post-validate** dataset (orchestrator sets **report_tag=post**)
+6. **Post-validate** dataset (orchestrator sets `report_tag=post`)
    ```bash
    python -m src.cli evaluate --config src/configs/eval.yaml
    ```
@@ -234,7 +234,7 @@ Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 an
    ```bash
    python -m src.cli evaluate --config src/configs/eval.yaml
    ```
-9. **Evaluate** model (uses **mapping pointer**; generates reports & Grad-CAM galleries via core/viz.py)
+9. **Evaluate** model (uses **mapping pointer**; generates reports & Grad-CAM galleries via `core/viz.py`)
    ```bash
    python -m src.cli evaluate --config src/configs/eval.yaml
    ```
