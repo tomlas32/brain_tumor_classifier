@@ -855,8 +855,21 @@ def apply_overrides(base: dict, overrides: List[str]) -> dict:
     return out
 
 def to_dict(dc) -> Dict[str, Any]:
-    """Dataclass → plain dict (for logging/manifests)."""
-    return asdict(dc)
+    """Dataclass → plain JSON-serializable dict (converts Path → str)."""
+    from dataclasses import is_dataclass, fields
+
+    def _conv(obj):
+        if isinstance(obj, Path):
+            return str(obj)
+        if is_dataclass(obj):
+            return {f.name: _conv(getattr(obj, f.name)) for f in fields(obj)}
+        if isinstance(obj, dict):
+            return {k: _conv(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple, set)):
+            return [_conv(x) for x in obj]
+        return obj
+
+    return _conv(dc)
 
 
 def _flatten_to_overrides(d: dict) -> List[str]:
