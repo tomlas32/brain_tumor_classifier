@@ -134,6 +134,77 @@ def _encoded_output_sha1(p: Path, size: int = 224) -> str:
     return h.hexdigest()
 
 
+def _phash_of_path(p: Path, size: int = 224, hash_size: int = 8, highfreq: int = 4) -> int:
+    """
+    Returns a 64-bit perceptual hash as an int.
+    - highfreq * hash_size => DCT region size (e.g., 32x32 when 4*8).
+    """
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+
+    sq = resize_and_pad(img, size=size)
+    gray = cv2.cvtColor(sq, cv2.COLOR_BGR2GRAY)
+    f = hash_size * highfreq
+    gray = cv2.resize(gray, (f, f), interpolation=cv2.INTER_AREA)
+    dct = cv2.dct(gray.astype("float32"))
+    dct_low = dct[:hash_size, :hash_size]
+    median = float(np.median(dct_low))
+    bits = (dct_low > median).astype(np.uint8).flatten()
+    # pack 64 bits into int
+    h = 0
+    for b in bits:
+        h = (h << 1) | int(b)
+    return int(h)
+
+
+def _phash_of_path_flip(p: Path, size: int = 224, **kw) -> int:
+    """Same as _phash_of_path but on a horizontally flipped normalized square."""
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+    sq = resize_and_pad(img, size=size)
+    sq = cv2.flip(sq, 1)
+    gray = cv2.cvtColor(sq, cv2.COLOR_BGR2GRAY)
+    hash_size = kw.get("hash_size", 8); highfreq = kw.get("highfreq", 4)
+    f = hash_size * highfreq
+    gray = cv2.resize(gray, (f, f), interpolation=cv2.INTER_AREA)
+    dct = cv2.dct(gray.astype("float32"))
+    dct_low = dct[:hash_size, :hash_size]
+    median = float(np.median(dct_low))
+    bits = (dct_low > median).astype(np.uint8).flatten()
+    h = 0
+    for b in bits:
+        h = (h << 1) | int(b)
+    return int(h)
+
+
+def _encoded_output_sha1_flip(p: Path, size: int = 224) -> str:
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+
+    sq = resize_and_pad(img, size=size)
+    sq = cv2.flip(sq, 1)  # horizontal flip
+
+    ext = p.suffix.lower()
+    if ext in (".jpg", ".jpeg"):
+        ok, buf = cv2.imencode(".jpg", sq, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    elif ext == ".png":
+        ok, buf = cv2.imencode(".png", sq, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
+    else:
+        ok, buf = cv2.imencode(".jpg", sq, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    if not ok:
+        raise ValueError(f"cv2.imencode failed for flipped {p} ({ext})")
+
+    h = hashlib.sha1()
+    h.update(buf.tobytes())
+    return h.hexdigest()
+
+
+def _hamming_int(a: int, b: int) -> int:
+    return (a ^ b).bit_count()
+
 def validate_dataset(
     in_dir: str | Path = MERGED_DIR,
     index_remap_path: str | Path | None = OUTPUTS_DIR / "mappings" / "latest.json",
@@ -145,6 +216,8 @@ def validate_dataset(
     *,
     enforce_size: bool = True,    # pre: False, post: True
     require_rgb: bool = True,     # pre: False, post: True
+    phash: bool = False,  
+    phash_thresh: int = 8,
 ) -> dict:
     """
     Validate a dataset directory tree.
@@ -176,6 +249,7 @@ def validate_dataset(
 
     seen_file_hashes: Dict[str, Path] = {}
     seen_content_hashes: Dict[str, Path] = {}
+    seen_phashes: list[tuple[int, Path]] = []
 
     errors_by_type = defaultdict(int)
     warnings_by_type = defaultdict(int)
@@ -304,9 +378,10 @@ def validate_dataset(
             try:
                 file_sig = _file_sha1(p)                       # exact file bytes
                 content_sig = _encoded_output_sha1(p, size=size)  # normalized pixels
+                content_sig_flip = _encoded_output_sha1_flip(p, size=size)
 
                 is_file_dup = file_sig in seen_file_hashes
-                is_content_dup = content_sig in seen_content_hashes
+                is_content_dup = (content_sig in seen_content_hashes) or (content_sig_flip in seen_content_hashes)
 
                 dup_hit = False
                 first_path: Path | None = None
@@ -337,6 +412,40 @@ def validate_dataset(
                     # mark first occurrences
                     seen_file_hashes.setdefault(file_sig, p)
                     seen_content_hashes.setdefault(content_sig, p)
+                    seen_content_hashes.setdefault(content_sig_flip, p)
+
+                    if phash:
+                        try:
+                            ph = _phash_of_path(p, size=size)
+                            ph_flip = _phash_of_path_flip(p, size=size)
+                            hit_path = None
+                            hit_dist = None
+
+                            for prev_ph, prev_path in seen_phashes:
+                                d1 = _hamming_int(ph, prev_ph)
+                                d2 = _hamming_int(ph_flip, prev_ph)
+                                d = min(d1, d2)
+                                if d <= phash_thresh:
+                                    hit_path = prev_path
+                                    hit_dist = d
+                                    break
+
+                            if hit_path is not None:
+                                log.warning(f"[NEAR_DUP_PHASH] {p} ~ {hit_path} (d={hit_dist})")
+                                n_warnings += 1
+                                _record(
+                                    "warning", "NEAR_DUP_PHASH", p, label=label,
+                                    details={"hamming": int(hit_dist), "threshold": int(phash_thresh)},
+                                    duplicate_of=str(hit_path),
+                                )
+
+                            seen_phashes.append((ph, p))
+                            seen_phashes.append((ph_flip, p))
+
+                        except Exception as e:
+                            log.warning(f"[PHASH_FAIL] {p} - {e}")
+                            n_warnings += 1
+                            _record("warning", "PHASH_FAIL", p, label=label, details={"error": str(e)})
 
             except Exception as e:
                 log.warning(f"[HASH_FAIL] {p} - {e}")
@@ -429,6 +538,11 @@ def main(argv=None) -> int:
     parser.set_defaults(write_report=True)
     parser.add_argument("--report-tag", type=str, default=None,
                     help="Optional tag to append to report filename, e.g. 'pre' or 'post'.")
+    parser.add_argument("--phash", action="store_true",
+                    help="Enable perceptual hashing (near-duplicate detection)")
+    parser.add_argument("--phash-thresh", type=int, default=8,
+                        help="Max Hamming distance for pHash near-duplicates (default: 8)")
+
 
 
     # shared logging flags: --log-level, --log-file
@@ -564,6 +678,8 @@ def main(argv=None) -> int:
         min_file_bytes=min_file_bytes,
         enforce_size=bool(getattr(cfg, "enforce_size", True)),
         require_rgb=bool(getattr(cfg, "require_rgb", True)),
+        phash=bool(getattr(args, "phash", False)),                
+        phash_thresh=int(getattr(args, "phash_thresh", 8)),  
     )
 
     if write_report:
