@@ -46,6 +46,7 @@ from typing import Dict, Tuple, Set
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
+from skimage.metrics import structural_similarity as ssim
 
 from datetime import datetime, timezone
 
@@ -132,6 +133,20 @@ def _encoded_output_sha1(p: Path, size: int = 224) -> str:
     h = hashlib.sha1()
     h.update(buf.tobytes())
     return h.hexdigest()
+
+def _ssim_similarity(p1: Path, p2: Path, size: int = 224) -> float:
+    """Compute SSIM similarity between two images resized & padded to same size."""
+    import cv2
+    img1 = cv2.imread(str(p1), cv2.IMREAD_COLOR)
+    img2 = cv2.imread(str(p2), cv2.IMREAD_COLOR)
+    if img1 is None or img2 is None:
+        return 0.0
+    sq1 = resize_and_pad(img1, size=size)
+    sq2 = resize_and_pad(img2, size=size)
+    gray1 = cv2.cvtColor(sq1, cv2.COLOR_BGR2GRAY)
+    gray2 = cv2.cvtColor(sq2, cv2.COLOR_BGR2GRAY)
+    score, _ = ssim(gray1, gray2, full=True)
+    return float(score)
 
 
 def _phash_of_path(p: Path, size: int = 224, hash_size: int = 8, highfreq: int = 4) -> int:
@@ -393,8 +408,8 @@ def validate_dataset(
                     used_sig = file_sig
                 elif is_content_dup:
                     dup_hit = True
-                    first_path = seen_content_hashes[content_sig]
-                    used_sig = content_sig
+                    first_path = seen_content_hashes.get(content_sig) or seen_content_hashes.get(content_sig_flip)
+                    used_sig = content_sig if content_sig in seen_content_hashes else content_sig_flip
 
                 if dup_hit and first_path is not None:
                     log.error(f"[DUPLICATE] {p} dup of {first_path}")
@@ -431,13 +446,22 @@ def validate_dataset(
                                     break
 
                             if hit_path is not None:
-                                log.warning(f"[NEAR_DUP_PHASH] {p} ~ {hit_path} (d={hit_dist})")
-                                n_warnings += 1
-                                _record(
-                                    "warning", "NEAR_DUP_PHASH", p, label=label,
-                                    details={"hamming": int(hit_dist), "threshold": int(phash_thresh)},
-                                    duplicate_of=str(hit_path),
-                                )
+                                # confirm with SSIM to reduce false positives
+                                score = _ssim_similarity(p, hit_path, size=size)
+                                if score >= 0.90:  # threshold: tweak as needed
+                                    log.warning(f"[NEAR_DUP_PHASH] {p} ~ {hit_path} (d={hit_dist}, ssim={score:.3f})")
+                                    n_warnings += 1
+                                    _record(
+                                        "warning", "NEAR_DUP_PHASH", p, label=label,
+                                        details={
+                                            "hamming": int(hit_dist),
+                                            "threshold": int(phash_thresh),
+                                            "ssim": round(score, 3)
+                                        },
+                                        duplicate_of=str(hit_path),
+                                    )
+                                else:
+                                    log.info(f"[PHASH_REJECTED] {p} vs {hit_path} (d={hit_dist}, ssim={score:.3f})")
 
                             seen_phashes.append((ph, p))
                             seen_phashes.append((ph_flip, p))
