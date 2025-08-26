@@ -34,6 +34,9 @@ validate:
   size: 224
   exts: null                          # accept defaults; you can force with 'all' or a list
   dup_check: true
+  phash: true
+  phash_thresh: 8
+  ssim_thresh: 0.90
   warn_low_std: 3.0
   min_file_bytes: 1024
   fail_on: never                      # 'error' | 'warning' | 'never'

@@ -233,6 +233,7 @@ def validate_dataset(
     require_rgb: bool = True,     # pre: False, post: True
     phash: bool = False,  
     phash_thresh: int = 8,
+    ssim_thresh: float = 0.90,
 ) -> dict:
     """
     Validate a dataset directory tree.
@@ -448,7 +449,7 @@ def validate_dataset(
                             if hit_path is not None:
                                 # confirm with SSIM to reduce false positives
                                 score = _ssim_similarity(p, hit_path, size=size)
-                                if score >= 0.90:  # threshold: tweak as needed
+                                if score >= ssim_thresh:  # threshold: tweak as needed
                                     log.warning(f"[NEAR_DUP_PHASH] {p} ~ {hit_path} (d={hit_dist}, ssim={score:.3f})")
                                     n_warnings += 1
                                     _record(
@@ -566,6 +567,9 @@ def main(argv=None) -> int:
                     help="Enable perceptual hashing (near-duplicate detection)")
     parser.add_argument("--phash-thresh", type=int, default=8,
                         help="Max Hamming distance for pHash near-duplicates (default: 8)")
+    parser.add_argument("--ssim-thresh", type=float, default=0.90,
+                    help="SSIM confirmation threshold for pHash near-duplicates (default: 0.90)")
+
 
 
 
@@ -593,7 +597,8 @@ def main(argv=None) -> int:
         # If strict checks are enabled, assume post-validate → processed; else pre → merged
         strict = bool(getattr(cfg, "enforce_size", True) and getattr(cfg, "require_rgb", True))
         in_dir = PROCESSED_DIR if strict else MERGED_DIR
-        
+    
+    
     mapping_pointer = cfg.mapping_pointer or args.mapping_pointer
     index_remap = cfg.index_remap or args.index_remap
     size = cfg.size if cfg.size is not None else args.size
@@ -603,7 +608,8 @@ def main(argv=None) -> int:
     fail_on = (cfg.fail_on or args.fail_on).lower()
     write_report = bool(cfg.write_report) if cfg.write_report is not None else bool(args.write_report)
     dry = bool(getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False))
-
+    ssim_thresh = cfg.ssim_thresh if getattr(cfg, "ssim_thresh", None) is not None else args.ssim_thresh
+    
     # exts: allow list or 'all' from config; otherwise CLI string
     exts_source = cfg.exts if cfg.exts is not None else args.exts
     exts_set = parse_exts(exts_source)
@@ -703,7 +709,8 @@ def main(argv=None) -> int:
         enforce_size=bool(getattr(cfg, "enforce_size", True)),
         require_rgb=bool(getattr(cfg, "require_rgb", True)),
         phash=bool(getattr(args, "phash", False)),                
-        phash_thresh=int(getattr(args, "phash_thresh", 8)),  
+        phash_thresh=int(getattr(args, "phash_thresh", 8)),
+        ssim_thresh=float(ssim_thresh),  
     )
 
     if write_report:
