@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pytest
+import pytest, time
 
 # Import the validate module under test
 from src.pipeline import validate as validate_mod
@@ -192,6 +192,9 @@ def test_fail_on_policy_warning_only(tmp_dataset: Path):
 # ------------------------- Reporting -------------------------
 
 def test_report_written_and_toggle(tmp_dataset: Path, tmp_path: Path):
+
+    from uuid import uuid4
+
     # One valid image to ensure run passes
     ok = np.full((224, 224, 3), 50, dtype=np.uint8)
     _write_png(tmp_dataset / "glioma" / "ok.png", ok)
@@ -200,11 +203,13 @@ def test_report_written_and_toggle(tmp_dataset: Path, tmp_path: Path):
     before = _latest_reports(reports_dir)
 
     # Run with default (write report)
+    tag = f"t_{uuid4().hex[:8]}"
     code = validate_mod.main([
         "--in-dir", str(tmp_dataset),
         "--size", "224",
         "--exts", "png",
         "--fail-on", "error",
+        "--report-tag", tag,
     ])
     assert code == 0
 
@@ -212,12 +217,14 @@ def test_report_written_and_toggle(tmp_dataset: Path, tmp_path: Path):
     assert len(after) == len(before) + 1, "Expected a new validation report"
 
     # Run with --no-write-report: count shouldn't increase
+    tag = f"t_{uuid4().hex[:8]}"
     code2 = validate_mod.main([
         "--in-dir", str(tmp_dataset),
         "--size", "224",
         "--exts", "png",
         "--fail-on", "error",
         "--no-write-report",
+        "--report-tag", tag,
     ])
     assert code2 == 0
     after2 = _latest_reports(reports_dir)
@@ -251,12 +258,14 @@ def test_phash_neardup_rejected_when_ssim_low(monkeypatch, tmp_dataset: Path):
         "--in-dir", str(tmp_dataset),
         "--size", "224",
         "--exts", "png",
-        "--dup-check",
+        "--dup-check",                 # ensure duplicate logic runs
         "--phash",
         "--phash-thresh", "8",
         "--ssim-thresh", "0.90",
         "--fail-on", "warning",
         "--no-write-report",
+        "--override", "min_file_bytes=0",  # suppress TINY_FILE
+        "--override", "warn_low_std=0",    # suppress LOW_STD
     ])
     # No warnings/errors should be recorded because SSIM check rejects the near-dup
     assert code == 0

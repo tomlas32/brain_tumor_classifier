@@ -534,7 +534,7 @@ def main(argv=None) -> int:
         help="Dataset root to validate. If omitted: uses data/merged for pre or data/processed for post (based on config).")
     parser.add_argument("--index-remap", type=Path, default=None,
                     help="Optional path to index_remap.json (allowed classes). If omitted, label checks are skipped.")
-    parser.add_argument("--size", type=int, default=224, help="Expected image size (square)")
+    parser.add_argument("--size", type=int, default=None, help="Expected image size (square)")
     parser.add_argument("--exts", type=str, default=DEFAULT_EXTS,
                         help="Comma-separated extensions. Use +ext to add; 'all' to accept any.")
     parser.add_argument("--dup-check", action="store_true", help="Enable duplicate detection (SHA-1)")
@@ -542,7 +542,7 @@ def main(argv=None) -> int:
                         help="Warn if per-image std is below this threshold")
     parser.add_argument("--min-file-bytes", type=int, default=1024,
                         help="Warn if file size is below this many bytes")
-    parser.add_argument("--fail-on", choices=["error", "warning", "never"], default="error",
+    parser.add_argument("--fail-on", choices=["error", "warning", "never"], default=None,
                         help="Exit with nonzero code if these severities occur")
     parser.add_argument(
     "--no-write-report",
@@ -560,7 +560,7 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Plan only; do not open images or write a report.")
     # default ON
-    parser.set_defaults(write_report=True)
+    parser.set_defaults(write_report=None)
     parser.add_argument("--report-tag", type=str, default=None,
                     help="Optional tag to append to report filename, e.g. 'pre' or 'post'.")
     parser.add_argument("--phash", action="store_true",
@@ -605,8 +605,8 @@ def main(argv=None) -> int:
     dup_check = cfg.dup_check if cfg.dup_check is not None else args.dup_check
     warn_low_std = cfg.warn_low_std if cfg.warn_low_std is not None else args.warn_low_std
     min_file_bytes = cfg.min_file_bytes if cfg.min_file_bytes is not None else args.min_file_bytes
-    fail_on = (cfg.fail_on or args.fail_on).lower()
-    write_report = bool(cfg.write_report) if cfg.write_report is not None else bool(args.write_report)
+    fail_on = (args.fail_on or cfg.fail_on or "error").lower()
+    write_report = args.write_report if args.write_report is not None else cfg.write_report
     dry = bool(getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False))
     ssim_thresh = cfg.ssim_thresh if getattr(cfg, "ssim_thresh", None) is not None else args.ssim_thresh
     
