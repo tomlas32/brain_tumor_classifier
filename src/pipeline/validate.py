@@ -535,12 +535,13 @@ def main(argv=None) -> int:
     parser.add_argument("--index-remap", type=Path, default=None,
                     help="Optional path to index_remap.json (allowed classes). If omitted, label checks are skipped.")
     parser.add_argument("--size", type=int, default=None, help="Expected image size (square)")
-    parser.add_argument("--exts", type=str, default=DEFAULT_EXTS,
+    parser.add_argument("--exts", type=str, default=None,
                         help="Comma-separated extensions. Use +ext to add; 'all' to accept any.")
-    parser.add_argument("--dup-check", action="store_true", help="Enable duplicate detection (SHA-1)")
-    parser.add_argument("--warn-low-std", type=float, default=3.0,
+    parser.add_argument("--dup-check", dest="dup_check", action="store_true", help="Enable duplicate detection")
+    parser.add_argument("--no-dup-check", dest="dup_check", action="store_false", help="Disable duplicate detection")
+    parser.add_argument("--warn-low-std", type=float, default=None,
                         help="Warn if per-image std is below this threshold")
-    parser.add_argument("--min-file-bytes", type=int, default=1024,
+    parser.add_argument("--min-file-bytes", type=int, default=None,
                         help="Warn if file size is below this many bytes")
     parser.add_argument("--fail-on", choices=["error", "warning", "never"], default=None,
                         help="Exit with nonzero code if these severities occur")
@@ -563,11 +564,13 @@ def main(argv=None) -> int:
     parser.set_defaults(write_report=None)
     parser.add_argument("--report-tag", type=str, default=None,
                     help="Optional tag to append to report filename, e.g. 'pre' or 'post'.")
-    parser.add_argument("--phash", action="store_true",
+    parser.add_argument("--phash", dest="phash", action="store_true",
                     help="Enable perceptual hashing (near-duplicate detection)")
-    parser.add_argument("--phash-thresh", type=int, default=8,
+    parser.add_argument("--no-phash", dest="phash", action="store_false",
+                    help="Disable perceptual hashing (near-duplicate detection)")
+    parser.add_argument("--phash-thresh", type=int, default=None,
                         help="Max Hamming distance for pHash near-duplicates (default: 8)")
-    parser.add_argument("--ssim-thresh", type=float, default=0.90,
+    parser.add_argument("--ssim-thresh", type=float, default=None,
                     help="SSIM confirmation threshold for pHash near-duplicates (default: 0.90)")
 
 
@@ -601,17 +604,19 @@ def main(argv=None) -> int:
     
     mapping_pointer = cfg.mapping_pointer or args.mapping_pointer
     index_remap = cfg.index_remap or args.index_remap
-    size = cfg.size if cfg.size is not None else args.size
-    dup_check = cfg.dup_check if cfg.dup_check is not None else args.dup_check
-    warn_low_std = cfg.warn_low_std if cfg.warn_low_std is not None else args.warn_low_std
-    min_file_bytes = cfg.min_file_bytes if cfg.min_file_bytes is not None else args.min_file_bytes
+    size = args.size if args.size is not None else (cfg.size or 224)
+    dup_check = args.dup_check if args.dup_check is not None else bool(cfg.dup_check)
+    warn_low_std   = args.warn_low_std   if args.warn_low_std   is not None else cfg.warn_low_std
+    min_file_bytes = args.min_file_bytes if args.min_file_bytes is not None else cfg.min_file_bytes
     fail_on = (args.fail_on or cfg.fail_on or "error").lower()
     write_report = args.write_report if args.write_report is not None else cfg.write_report
     dry = bool(getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False))
-    ssim_thresh = cfg.ssim_thresh if getattr(cfg, "ssim_thresh", None) is not None else args.ssim_thresh
+    phash        = args.phash        if args.phash        is not None else bool(cfg.phash)
+    phash_thresh = args.phash_thresh if args.phash_thresh is not None else cfg.phash_thresh  # (default 8 in cfg)
+    ssim_thresh  = args.ssim_thresh  if args.ssim_thresh  is not None else cfg.ssim_thresh   # (default 0.90 in cfg)
     
     # exts: allow list or 'all' from config; otherwise CLI string
-    exts_source = cfg.exts if cfg.exts is not None else args.exts
+    exts_source = args.exts if args.exts is not None else (cfg.exts or DEFAULT_EXTS)
     exts_set = parse_exts(exts_source)
 
     
@@ -708,8 +713,8 @@ def main(argv=None) -> int:
         min_file_bytes=min_file_bytes,
         enforce_size=bool(getattr(cfg, "enforce_size", True)),
         require_rgb=bool(getattr(cfg, "require_rgb", True)),
-        phash=bool(getattr(args, "phash", False)),                
-        phash_thresh=int(getattr(args, "phash_thresh", 8)),
+        phash=phash,                
+        phash_thresh=phash_thresh,
         ssim_thresh=float(ssim_thresh),  
     )
 
