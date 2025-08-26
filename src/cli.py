@@ -269,6 +269,9 @@ def validate(
         help="Comma-separated extensions. Use +ext to add (e.g. '+webp'); use 'all' to accept any."
     ),
     dup_check: bool = False,  # default off (hashing can be slow); enable when needed
+    phash: bool = False,
+    phash_thresh: int = 8,
+    ssim_thresh: float = 0.9,
     fail_on: str = typer.Option("error", help="Fail on: 'error' | 'warning' | 'never'"),
     warn_low_std: float = 3.0,
     min_file_bytes: int = 1024,
@@ -326,6 +329,12 @@ def validate(
         argv += ["--in-dir", str(in_dir)]
     if index_remap is not None:
         argv += ["--index-remap", str(index_remap)]
+    if phash:  
+        argv += ["--phash"]
+    if phash_thresh is not None:
+        argv += ["--phash-thresh", str(phash_thresh)]
+    if ssim_thresh is not None:
+        argv += ["--ssim-thresh", str(ssim_thresh)]
 
     log.info("cli.dispatch", extra={"stage": "validate", "argv": argv})
 

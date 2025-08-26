@@ -152,6 +152,9 @@ class ValidateConfig:
     size: int = 224
     exts: Optional[object] = None  # list[str] | "all" | None
     dup_check: bool = False
+    phash: bool = True
+    phash_thresh: int = 8
+    ssim_thresh: float = 0.90
     warn_low_std: float = 3.0
     min_file_bytes: int = 1024
     fail_on: str = "error"
@@ -176,6 +179,9 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         "size": 224,
         "exts": None,
         "dup_check": False,
+        "phash": True,
+        "phash_thresh": 8,
+        "ssim_thresh": 0.90,
         "warn_low_std": 3.0,
         "min_file_bytes": 1024,
         "fail_on": "error",
@@ -200,6 +206,9 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         size=int(base.get("size", 224)),
         exts=base.get("exts"),  
         dup_check=bool(base.get("dup_check", False)),
+        phash=bool(base.get("phash", True)),
+        phash_thresh=int(base.get("phash_thresh", 8)),
+        ssim_thresh=float(base.get("ssim_thresh", 0.90)),
         warn_low_std=float(base.get("warn_low_std", 3.0)),
         min_file_bytes=int(base.get("min_file_bytes", 1024)),
         fail_on=str(base.get("fail_on", "error")),
