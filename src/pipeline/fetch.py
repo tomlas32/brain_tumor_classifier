@@ -96,14 +96,8 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
                         help="Skip writing outputs/downloads_pointer/.../latest.json")
     parser.add_argument("--pointer-dir", type=Path, default=None,
                         help="Override destination directory for pointer JSONs")
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for fetch (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). "
-                            "Repeat for multiple overrides.")
-    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not download or write pointers.")
-    
-    add_common_config_args(parser)
+
+    add_common_config_args(parser)  # --config, --override, `--dry-run`
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
 

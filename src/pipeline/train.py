@@ -66,6 +66,7 @@ from src.utils.parser_utils import (
     add_common_train_args,
     add_model_args,
     add_common_config_args,
+    add_mapping_args,
 )
 from src.train.runner import TrainRunnerInputs, run as run_training
 
@@ -96,13 +97,9 @@ def make_parser_train() -> argparse.ArgumentParser:
     add_common_logging_args(parser)   # log level/file
     # shared config flags: --config, --override, `--dry-run`
     add_common_config_args(parser)
-    parser.add_argument("--mapping-pointer", type=Path, default=None,
-                    help="Mapping pointer dir or file (preferred). Overrides --index-remap/config.data.mapping_path.")
-
-    parser.add_argument("--index-remap", type=Path, default=None,
-    help="(Deprecated) Prefer config.data.mapping_path. If provided, overrides config.")
+    # Shared mapping flags: --mapping-pointer, --index-remap
+    add_mapping_args(parser)
     
-
     return parser
 
 

@@ -221,3 +221,40 @@ def add_common_config_args(
         parser.add_argument(
             "--dry-run", action="store_true", help=dry_help
         )
+
+
+def add_dataset_args(
+    parser: argparse.ArgumentParser,
+    *,
+    with_size: bool = True,
+    with_exts: bool = True,
+    default_size: int = None,
+    default_exts: str = None,
+) -> None:
+    """Attach common dataset I/O args (dirs, size, exts)."""
+    parser.add_argument(
+        "--in-dir", type=Path, default=None,
+        help="Dataset root to process. If omitted, uses stage-specific defaults."
+    )
+    if with_size:
+        parser.add_argument(
+            "--size", type=int, default=default_size,
+            help=f"Expected image size (square, default: {default_size})."
+        )
+    if with_exts:
+        parser.add_argument(
+            "--exts", type=str, default=default_exts,
+            help="Comma-separated extensions. Use +ext to add; 'all' to accept any."
+        )
+
+
+def add_mapping_args(parser: argparse.ArgumentParser) -> None:
+    """Attach common mapping/index args used in validate/evaluate/train."""
+    parser.add_argument(
+        "--index-remap", type=Path, default=None,
+        help="Optional path to index_remap.json (allowed classes)."
+    )
+    parser.add_argument(
+        "--mapping-pointer", type=Path, default=None,
+        help="Pointer dir/file for latest mapping; overrides --index-remap."
+    )
