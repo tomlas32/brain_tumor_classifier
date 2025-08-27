@@ -302,7 +302,7 @@ def validate_dataset(
         "has_allowed_labels": allowed_labels is not None,
     })
 
-    for p in in_dir.rglob("*"):
+    for p in sorted(in_dir.rglob("*"), key=lambda x: str(x)):
         if not p.is_file():
             continue
         n_files_seen += 1
@@ -434,36 +434,45 @@ def validate_dataset(
                         try:
                             ph = _phash_of_path(p, size=size)
                             ph_flip = _phash_of_path_flip(p, size=size)
-                            hit_path = None
-                            hit_dist = None
+
+                            best_path = None
+                            best_dist = None
+                            best_ssim = None
 
                             for prev_ph, prev_path in seen_phashes:
                                 d1 = _hamming_int(ph, prev_ph)
                                 d2 = _hamming_int(ph_flip, prev_ph)
                                 d = min(d1, d2)
-                                if d <= phash_thresh:
-                                    hit_path = prev_path
-                                    hit_dist = d
-                                    break
+                                if d > phash_thresh:
+                                    continue
 
-                            if hit_path is not None:
-                                # confirm with SSIM to reduce false positives
-                                score = _ssim_similarity(p, hit_path, size=size)
-                                if score >= ssim_thresh:  # threshold: tweak as needed
-                                    log.warning(f"[NEAR_DUP_PHASH] {p} ~ {hit_path} (d={hit_dist}, ssim={score:.3f})")
-                                    n_warnings += 1
-                                    _record(
-                                        "warning", "NEAR_DUP_PHASH", p, label=label,
-                                        details={
-                                            "hamming": int(hit_dist),
-                                            "threshold": int(phash_thresh),
-                                            "ssim": round(score, 3)
-                                        },
-                                        duplicate_of=str(hit_path),
-                                    )
-                                else:
-                                    log.info(f"[PHASH_REJECTED] {p} vs {hit_path} (d={hit_dist}, ssim={score:.3f})")
+                                # Prefer same-class + verify similarity
+                                score = _ssim_similarity(p, prev_path, size=size)
+                                same_class = (p.parent.name == prev_path.parent.name)
 
+                                if not same_class or score < ssim_thresh:
+                                    # Keep the visibility log, but do not record a warning
+                                    log.info(f"[PHASH_REJECTED] {p} vs {prev_path} (d={d}, ssim={score:.3f})")
+                                    continue
+
+                                # Track the best acceptable candidate (lowest Hamming, then highest SSIM)
+                                if (best_path is None) or (d < best_dist) or (d == best_dist and score > best_ssim):
+                                    best_path, best_dist, best_ssim = prev_path, d, score
+
+                            if best_path is not None:
+                                log.warning(f"[NEAR_DUP_PHASH] {p} ~ {best_path} (d={best_dist}, ssim={best_ssim:.3f})")
+                                n_warnings += 1
+                                _record(
+                                    "warning", "NEAR_DUP_PHASH", p, label=label,
+                                    details={
+                                        "hamming": int(best_dist),
+                                        "threshold": int(phash_thresh),
+                                        "ssim": round(best_ssim, 3)
+                                    },
+                                    duplicate_of=str(best_path),
+                                )
+
+                            # Always index current image’s pHashes after evaluating
                             seen_phashes.append((ph, p))
                             seen_phashes.append((ph_flip, p))
 
