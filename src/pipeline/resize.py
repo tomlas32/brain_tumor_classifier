@@ -233,15 +233,15 @@ def main(argv=None) -> int:
     4) Processes images and prints a concise human summary to stdout.
     """
     parser = argparse.ArgumentParser(description="Resize/pad images to a canonical processed store (after merge/cleanup).")
-    parser.add_argument("--train-in",  type=Path, default=TRAIN_INPUT,
+    parser.add_argument("--train-in",  type=Path, default=None,
                         help="Input root (canonical): data/merged by default.")
-    parser.add_argument("--train-out", type=Path, default=TRAIN_OUT,
+    parser.add_argument("--train-out", type=Path, default=None,
                         help="Output root (canonical): data/processed by default.")
     parser.add_argument("--test-in",   type=Path, default=None,
                         help="(Optional) legacy testing input root; omitted in canonical flow.")
     parser.add_argument("--test-out",  type=Path, default=None,
                         help="(Optional) legacy testing output root; omitted in canonical flow.")
-    parser.add_argument("--size", type=int, default=224, help="Output square size in pixels (e.g., 224).")
+    parser.add_argument("--size", type=int, default=None, help="Output square size in pixels (e.g., 224).")
     
     add_common_config_args(parser)   # --config, --override
     add_common_logging_args(parser)  # --log-level, --log-file
@@ -256,8 +256,8 @@ def main(argv=None) -> int:
     cfg = build_resize_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
-    train_in  = cfg.train_in  if cfg.train_in  is not None else args.train_in
-    train_out = cfg.train_out if cfg.train_out is not None else args.train_out
+    train_in  = (cfg.train_in  if cfg.train_in  is not None else args.train_in)  or MERGED_DIR
+    train_out = (cfg.train_out if cfg.train_out is not None else args.train_out) or PROCESSED_DIR
     test_in   = cfg.test_in   if cfg.test_in   is not None else args.test_in     # may be None
     test_out  = cfg.test_out  if cfg.test_out  is not None else args.test_out    # may be None
 

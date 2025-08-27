@@ -106,7 +106,7 @@ def _write_manifest(manifest: dict) -> Path:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Merge Kaggle Training/Testing into data/merged.")
-    parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
+    parser.add_argument("--dataset", type=str, default=None,
                         help="Kaggle slug (owner/dataset) used to auto-locate the fetch pointer.")
     parser.add_argument("--pointer", type=Path, default=None,
                         help="Optional explicit path to the fetch pointer JSON (overrides --dataset).")

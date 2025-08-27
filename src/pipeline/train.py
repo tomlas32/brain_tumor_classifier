@@ -89,7 +89,7 @@ def make_parser_train() -> argparse.ArgumentParser:
     python -m src.pipeline.train --train-in data/training_resized --test-in data/testing_resized
     """
     parser = argparse.ArgumentParser(description="Train a CNN on resized MRI images.")
-    parser.add_argument("--image-size", type=int, default=224,
+    parser.add_argument("--image-size", type=int, default=None,
                         help="Square size after resize/pad (must match your preprocessing)")
     add_common_dataset_args(parser)   # roots, batch size, workers, val_frac, seed, out dirs, etc.
     add_common_train_args(parser)     # epochs, lr, weight_decay, scheduler, amp, etc.
