@@ -84,7 +84,7 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     parser.add_argument(
     "--top-per-class",
     type=int,
-    default=6,
+    default=None,
     help="Number of items per true class to include in galleries/Grad-CAM (default: 6)",
     )
     parser.add_argument(

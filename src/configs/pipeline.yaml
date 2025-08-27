@@ -1,6 +1,6 @@
 # Master pipeline configuration for brain tumor classification
 
-run_id: bt-exp-001
+run_id: bt-exp-002
 
 env:
   seed: 42
@@ -147,5 +147,7 @@ evaluate:
     make_galleries: true
     make_gradcam: true
     top_per_class: 6
+    gallery_cols: 4
+    gradcam_cols: 4
   run_id: null
   dry_run: false

@@ -12,7 +12,7 @@ Defines:
 STRICT_ERROR_CODES = {
     "UNREADABLE", "READ_FAIL", "STAT_FAIL", "TINY_FILE",
     "NOT_RGB", "BAD_SIZE", "ALL_BLACK", "ALL_WHITE",
-    "DUPLICATE",
+    "DUPLICATE","NEAR_DUP_PHASH",
 }
 
 # Codes we never auto-move (contract/mapping issues)

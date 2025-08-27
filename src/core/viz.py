@@ -63,12 +63,26 @@ def _pil_to_numpy_float01(img: Image.Image) -> np.ndarray:
     arr = np.asarray(img).astype("float32") / 255.0
     return arr
 
+scientific_names = {
+    "glioma_tumor": "Glioma",
+    "meningioma_tumor": "Meningioma",
+    "no_tumor": "No Tumor",
+    "pituitary_tumor": "Pituitary Adenoma",
+}
+
+def _pretty_name(name: str) -> str:
+    """Map raw class name to a prettier scientific label if available."""
+    return scientific_names.get(name, name.replace("_", " ").title())
 
 def _make_title(item: Dict, class_names: List[str]) -> str:
     """Compose a concise tile title from a prediction record."""
     t = item.get("true"); p = item.get("pred"); c = item.get("conf")
-    t_name = class_names[t] if isinstance(t, int) and 0 <= t < len(class_names) else str(t)
-    p_name = class_names[p] if isinstance(p, int) and 0 <= p < len(class_names) else str(p)
+    t_name_raw = class_names[t] if isinstance(t, int) and 0 <= t < len(class_names) else str(t)
+    p_name_raw = class_names[p] if isinstance(p, int) and 0 <= p < len(class_names) else str(p)
+
+    t_name = _pretty_name(t_name_raw)
+    p_name = _pretty_name(p_name_raw)
+
     if c is None:
         return f"T:{t_name}  P:{p_name}"
     return f"T:{t_name}  P:{p_name}  conf:{c:.2f}"
@@ -98,6 +112,16 @@ def _select_target_layer(model) -> torch.nn.Module:
         return None
 
 
+def _set_tile_caption(ax, text: str, fontsize: int = 9):
+    # put caption just below the axes; not clipped by the axes box
+    ax.text(
+        0.5, -0.06, text,
+        transform=ax.transAxes,
+        ha="center", va="top",
+        fontsize=9,
+        clip_on=False, wrap=True,
+    )
+
 # --------------------------- Public API --------------------------------------
 
 
@@ -105,7 +129,7 @@ def show_calls_gallery(
     items: List[Dict],
     class_names: List[str],
     *,
-    cols: int = 6,
+    cols: int = None,
     title: str = "gallery",
     save_dir: Path,
     image_size: int = 224,
@@ -151,8 +175,9 @@ def show_calls_gallery(
         if image_size:
             img = img.resize((image_size, image_size), Image.BILINEAR)
         ax.imshow(img)
-        ax.set_title(_make_title(item, class_names), fontsize=9)
+        ax.set_title(_make_title(item, class_names), fontsize=7)
         ax.axis("off")
+
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     out_path = save_dir / f"{title}.png"
@@ -275,7 +300,7 @@ def show_gradcam_gallery(
             overlay_img = Image.fromarray(overlay)
 
             ax.imshow(overlay_img)
-            ax.set_title(_make_title(item, class_names), fontsize=9)
+            ax.set_title(_make_title(item, class_names), fontsize=7)
             ax.axis("off")
             rendered += 1
 

@@ -544,6 +544,8 @@ class EvalIOConfig:
     make_galleries: bool = True
     make_gradcam: bool = True
     top_per_class: int = 6
+    gallery_cols: int = 4        
+    gradcam_cols: int = 4         
 
 
 ### Train Config

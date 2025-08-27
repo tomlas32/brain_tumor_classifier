@@ -217,18 +217,18 @@ def run(inputs: EvalRunnerInputs) -> Tuple[float, float, float, float]:
 
         if inputs.make_galleries:
             gallery_dir = out_dir / "galleries"
-            show_calls_gallery(mistakes, class_names, cols=6, title="misclassifications", save_dir=gallery_dir)
-            show_calls_gallery(corrects, class_names, cols=6, title="top-correct", save_dir=gallery_dir)
+            show_calls_gallery(mistakes, class_names, cols=inputs.args_dict["io"]["gallery_cols"], title="misclassifications", save_dir=gallery_dir)
+            show_calls_gallery(corrects, class_names, cols=inputs.args_dict["io"]["gallery_cols"], title="top-correct", save_dir=gallery_dir)
 
         if inputs.make_gradcam:
             gradcam_dir = out_dir / "gradcam"
             show_gradcam_gallery(
                 predictions=mistakes, class_names=class_names, model=model, device=device,
-                ds_for_transform=test_ds, cols=4, title="misclass_gradcam", target_layer=None, save_dir=gradcam_dir
+                ds_for_transform=test_ds, cols=inputs.args_dict["io"]["gradcam_cols"], title="misclass_gradcam", target_layer=None, save_dir=gradcam_dir
             )
             show_gradcam_gallery(
                 predictions=corrects, class_names=class_names, model=model, device=device,
-                ds_for_transform=test_ds, cols=4, title="correct_class_gradcam", target_layer=None, save_dir=gradcam_dir
+                ds_for_transform=test_ds, cols=inputs.args_dict["io"]["gradcam_cols"], title="correct_class_gradcam", target_layer=None, save_dir=gradcam_dir
             )
 
     # Summary manifest (+ latest pointer)
