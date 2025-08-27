@@ -195,7 +195,11 @@ def run(inputs: EvalRunnerInputs) -> Tuple[float, float, float, float]:
     print(f"TEST — Acc={acc:.3f}  P={prec:.3f}  R={rec:.3f}  F1={f1:.3f}")
 
     # Reports & confusion matrices
-    out_dir = Path(inputs.eval_out); out_dir.mkdir(parents=True, exist_ok=True)
+    base_out = Path(inputs.eval_out)
+    run_scope = inputs.run_id or "no-runid"
+    out_dir = base_out / run_scope
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
     save_classification_report(y_true, y_pred, class_names, out_dir / "test_classification_report.txt")
     save_confusions(y_true, y_pred, class_names, out_dir, title="Test")
 
