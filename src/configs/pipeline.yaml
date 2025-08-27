@@ -34,10 +34,13 @@ validate:
   size: 224
   exts: null                          # accept defaults; you can force with 'all' or a list
   dup_check: true
+  phash: true
+  phash_thresh: 8
+  ssim_thresh: 0.90
   warn_low_std: 3.0
   min_file_bytes: 1024
   fail_on: never                      # 'error' | 'warning' | 'never'
-  mapping_pointer: null               # optional (for class set enforcement later if you add it)
+  mapping_pointer: outputs/pointers/mapping/sartajbhuvaji/brain-tumor-classification-mri/latest.json               # optional (for class set enforcement later if you add it)
   write_report: true
   dry_run: false
   enforce_size: true                  # orchestrator flips to False for pre, True for post
@@ -77,7 +80,7 @@ split:
 
 train:
   data:
-    mapping_path: outputs/mappings/latest.json   # ← move it here
+    mapping_path: outputs/mappings/latest.json   
   train_in: data/training
   val_in: data/validation      # <<< add this
   val_frac: 0.0                # <<< disable internal split

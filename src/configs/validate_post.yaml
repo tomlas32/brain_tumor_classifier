@@ -3,7 +3,10 @@ in_dir: data/processed
 index_remap: null          # mapping is created by split; not enforced here
 size: 224
 exts: "jpg,jpeg,png"       # or "all"
-dup_check: false           # optional post-resize; usually off
+dup_check: true            # optional post-resize; usually off
+phash: true                # enable if you want perceptual hash
+phash_thresh: 8            # threshold for perceptual hash
+ssim_thresh: 0.90          # 
 warn_low_std: 3.0
 min_file_bytes: 1024
 fail_on: "error"

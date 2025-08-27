@@ -4,6 +4,9 @@ index_remap: null          # IMPORTANT: no class order enforcement in pre
 size: 224                  # recorded in report; not enforced in pre
 exts: "jpg,jpeg,png"       # or "all" if you accept any
 dup_check: true            # enable if you want duplicate detection before cleanup
+phash: true                 # enable if you want perceptual hash
+phash_thresh: 8            # threshold for perceptual hash
+ssim_thresh: 0.90          # 
 warn_low_std: 3.0
 min_file_bytes: 1024
 fail_on: "error"

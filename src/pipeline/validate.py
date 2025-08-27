@@ -46,6 +46,7 @@ from typing import Dict, Tuple, Set
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
+from skimage.metrics import structural_similarity as ssim
 
 from datetime import datetime, timezone
 
@@ -133,6 +134,91 @@ def _encoded_output_sha1(p: Path, size: int = 224) -> str:
     h.update(buf.tobytes())
     return h.hexdigest()
 
+def _ssim_similarity(p1: Path, p2: Path, size: int = 224) -> float:
+    """Compute SSIM similarity between two images resized & padded to same size."""
+    import cv2
+    img1 = cv2.imread(str(p1), cv2.IMREAD_COLOR)
+    img2 = cv2.imread(str(p2), cv2.IMREAD_COLOR)
+    if img1 is None or img2 is None:
+        return 0.0
+    sq1 = resize_and_pad(img1, size=size)
+    sq2 = resize_and_pad(img2, size=size)
+    gray1 = cv2.cvtColor(sq1, cv2.COLOR_BGR2GRAY)
+    gray2 = cv2.cvtColor(sq2, cv2.COLOR_BGR2GRAY)
+    score, _ = ssim(gray1, gray2, full=True)
+    return float(score)
+
+
+def _phash_of_path(p: Path, size: int = 224, hash_size: int = 8, highfreq: int = 4) -> int:
+    """
+    Returns a 64-bit perceptual hash as an int.
+    - highfreq * hash_size => DCT region size (e.g., 32x32 when 4*8).
+    """
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+
+    sq = resize_and_pad(img, size=size)
+    gray = cv2.cvtColor(sq, cv2.COLOR_BGR2GRAY)
+    f = hash_size * highfreq
+    gray = cv2.resize(gray, (f, f), interpolation=cv2.INTER_AREA)
+    dct = cv2.dct(gray.astype("float32"))
+    dct_low = dct[:hash_size, :hash_size]
+    median = float(np.median(dct_low))
+    bits = (dct_low > median).astype(np.uint8).flatten()
+    # pack 64 bits into int
+    h = 0
+    for b in bits:
+        h = (h << 1) | int(b)
+    return int(h)
+
+
+def _phash_of_path_flip(p: Path, size: int = 224, **kw) -> int:
+    """Same as _phash_of_path but on a horizontally flipped normalized square."""
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+    sq = resize_and_pad(img, size=size)
+    sq = cv2.flip(sq, 1)
+    gray = cv2.cvtColor(sq, cv2.COLOR_BGR2GRAY)
+    hash_size = kw.get("hash_size", 8); highfreq = kw.get("highfreq", 4)
+    f = hash_size * highfreq
+    gray = cv2.resize(gray, (f, f), interpolation=cv2.INTER_AREA)
+    dct = cv2.dct(gray.astype("float32"))
+    dct_low = dct[:hash_size, :hash_size]
+    median = float(np.median(dct_low))
+    bits = (dct_low > median).astype(np.uint8).flatten()
+    h = 0
+    for b in bits:
+        h = (h << 1) | int(b)
+    return int(h)
+
+
+def _encoded_output_sha1_flip(p: Path, size: int = 224) -> str:
+    img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cv2.imread failed: {p}")
+
+    sq = resize_and_pad(img, size=size)
+    sq = cv2.flip(sq, 1)  # horizontal flip
+
+    ext = p.suffix.lower()
+    if ext in (".jpg", ".jpeg"):
+        ok, buf = cv2.imencode(".jpg", sq, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    elif ext == ".png":
+        ok, buf = cv2.imencode(".png", sq, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
+    else:
+        ok, buf = cv2.imencode(".jpg", sq, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    if not ok:
+        raise ValueError(f"cv2.imencode failed for flipped {p} ({ext})")
+
+    h = hashlib.sha1()
+    h.update(buf.tobytes())
+    return h.hexdigest()
+
+
+def _hamming_int(a: int, b: int) -> int:
+    return (a ^ b).bit_count()
 
 def validate_dataset(
     in_dir: str | Path = MERGED_DIR,
@@ -145,6 +231,9 @@ def validate_dataset(
     *,
     enforce_size: bool = True,    # pre: False, post: True
     require_rgb: bool = True,     # pre: False, post: True
+    phash: bool = False,  
+    phash_thresh: int = 8,
+    ssim_thresh: float = 0.90,
 ) -> dict:
     """
     Validate a dataset directory tree.
@@ -176,6 +265,7 @@ def validate_dataset(
 
     seen_file_hashes: Dict[str, Path] = {}
     seen_content_hashes: Dict[str, Path] = {}
+    seen_phashes: list[tuple[int, Path]] = []
 
     errors_by_type = defaultdict(int)
     warnings_by_type = defaultdict(int)
@@ -304,9 +394,10 @@ def validate_dataset(
             try:
                 file_sig = _file_sha1(p)                       # exact file bytes
                 content_sig = _encoded_output_sha1(p, size=size)  # normalized pixels
+                content_sig_flip = _encoded_output_sha1_flip(p, size=size)
 
                 is_file_dup = file_sig in seen_file_hashes
-                is_content_dup = content_sig in seen_content_hashes
+                is_content_dup = (content_sig in seen_content_hashes) or (content_sig_flip in seen_content_hashes)
 
                 dup_hit = False
                 first_path: Path | None = None
@@ -318,8 +409,8 @@ def validate_dataset(
                     used_sig = file_sig
                 elif is_content_dup:
                     dup_hit = True
-                    first_path = seen_content_hashes[content_sig]
-                    used_sig = content_sig
+                    first_path = seen_content_hashes.get(content_sig) or seen_content_hashes.get(content_sig_flip)
+                    used_sig = content_sig if content_sig in seen_content_hashes else content_sig_flip
 
                 if dup_hit and first_path is not None:
                     log.error(f"[DUPLICATE] {p} dup of {first_path}")
@@ -337,6 +428,49 @@ def validate_dataset(
                     # mark first occurrences
                     seen_file_hashes.setdefault(file_sig, p)
                     seen_content_hashes.setdefault(content_sig, p)
+                    seen_content_hashes.setdefault(content_sig_flip, p)
+
+                    if phash:
+                        try:
+                            ph = _phash_of_path(p, size=size)
+                            ph_flip = _phash_of_path_flip(p, size=size)
+                            hit_path = None
+                            hit_dist = None
+
+                            for prev_ph, prev_path in seen_phashes:
+                                d1 = _hamming_int(ph, prev_ph)
+                                d2 = _hamming_int(ph_flip, prev_ph)
+                                d = min(d1, d2)
+                                if d <= phash_thresh:
+                                    hit_path = prev_path
+                                    hit_dist = d
+                                    break
+
+                            if hit_path is not None:
+                                # confirm with SSIM to reduce false positives
+                                score = _ssim_similarity(p, hit_path, size=size)
+                                if score >= ssim_thresh:  # threshold: tweak as needed
+                                    log.warning(f"[NEAR_DUP_PHASH] {p} ~ {hit_path} (d={hit_dist}, ssim={score:.3f})")
+                                    n_warnings += 1
+                                    _record(
+                                        "warning", "NEAR_DUP_PHASH", p, label=label,
+                                        details={
+                                            "hamming": int(hit_dist),
+                                            "threshold": int(phash_thresh),
+                                            "ssim": round(score, 3)
+                                        },
+                                        duplicate_of=str(hit_path),
+                                    )
+                                else:
+                                    log.info(f"[PHASH_REJECTED] {p} vs {hit_path} (d={hit_dist}, ssim={score:.3f})")
+
+                            seen_phashes.append((ph, p))
+                            seen_phashes.append((ph_flip, p))
+
+                        except Exception as e:
+                            log.warning(f"[PHASH_FAIL] {p} - {e}")
+                            n_warnings += 1
+                            _record("warning", "PHASH_FAIL", p, label=label, details={"error": str(e)})
 
             except Exception as e:
                 log.warning(f"[HASH_FAIL] {p} - {e}")
@@ -400,15 +534,16 @@ def main(argv=None) -> int:
         help="Dataset root to validate. If omitted: uses data/merged for pre or data/processed for post (based on config).")
     parser.add_argument("--index-remap", type=Path, default=None,
                     help="Optional path to index_remap.json (allowed classes). If omitted, label checks are skipped.")
-    parser.add_argument("--size", type=int, default=224, help="Expected image size (square)")
-    parser.add_argument("--exts", type=str, default=DEFAULT_EXTS,
+    parser.add_argument("--size", type=int, default=None, help="Expected image size (square)")
+    parser.add_argument("--exts", type=str, default=None,
                         help="Comma-separated extensions. Use +ext to add; 'all' to accept any.")
-    parser.add_argument("--dup-check", action="store_true", help="Enable duplicate detection (SHA-1)")
-    parser.add_argument("--warn-low-std", type=float, default=3.0,
+    parser.add_argument("--dup-check", dest="dup_check", action="store_true", help="Enable duplicate detection")
+    parser.add_argument("--no-dup-check", dest="dup_check", action="store_false", help="Disable duplicate detection")
+    parser.add_argument("--warn-low-std", type=float, default=None,
                         help="Warn if per-image std is below this threshold")
-    parser.add_argument("--min-file-bytes", type=int, default=1024,
+    parser.add_argument("--min-file-bytes", type=int, default=None,
                         help="Warn if file size is below this many bytes")
-    parser.add_argument("--fail-on", choices=["error", "warning", "never"], default="error",
+    parser.add_argument("--fail-on", choices=["error", "warning", "never"], default=None,
                         help="Exit with nonzero code if these severities occur")
     parser.add_argument(
     "--no-write-report",
@@ -426,9 +561,19 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Plan only; do not open images or write a report.")
     # default ON
-    parser.set_defaults(write_report=True)
+    parser.set_defaults(write_report=None)
     parser.add_argument("--report-tag", type=str, default=None,
                     help="Optional tag to append to report filename, e.g. 'pre' or 'post'.")
+    parser.add_argument("--phash", dest="phash", action="store_true",
+                    help="Enable perceptual hashing (near-duplicate detection)")
+    parser.add_argument("--no-phash", dest="phash", action="store_false",
+                    help="Disable perceptual hashing (near-duplicate detection)")
+    parser.add_argument("--phash-thresh", type=int, default=None,
+                        help="Max Hamming distance for pHash near-duplicates (default: 8)")
+    parser.add_argument("--ssim-thresh", type=float, default=None,
+                    help="SSIM confirmation threshold for pHash near-duplicates (default: 0.90)")
+
+
 
 
     # shared logging flags: --log-level, --log-file
@@ -455,19 +600,23 @@ def main(argv=None) -> int:
         # If strict checks are enabled, assume post-validate → processed; else pre → merged
         strict = bool(getattr(cfg, "enforce_size", True) and getattr(cfg, "require_rgb", True))
         in_dir = PROCESSED_DIR if strict else MERGED_DIR
-        
+    
+    
     mapping_pointer = cfg.mapping_pointer or args.mapping_pointer
     index_remap = cfg.index_remap or args.index_remap
-    size = cfg.size if cfg.size is not None else args.size
-    dup_check = cfg.dup_check if cfg.dup_check is not None else args.dup_check
-    warn_low_std = cfg.warn_low_std if cfg.warn_low_std is not None else args.warn_low_std
-    min_file_bytes = cfg.min_file_bytes if cfg.min_file_bytes is not None else args.min_file_bytes
-    fail_on = (cfg.fail_on or args.fail_on).lower()
-    write_report = bool(cfg.write_report) if cfg.write_report is not None else bool(args.write_report)
+    size = args.size if args.size is not None else (cfg.size or 224)
+    dup_check = args.dup_check if args.dup_check is not None else bool(cfg.dup_check)
+    warn_low_std   = args.warn_low_std   if args.warn_low_std   is not None else cfg.warn_low_std
+    min_file_bytes = args.min_file_bytes if args.min_file_bytes is not None else cfg.min_file_bytes
+    fail_on = (args.fail_on or cfg.fail_on or "error").lower()
+    write_report = args.write_report if args.write_report is not None else cfg.write_report
     dry = bool(getattr(args, "dry_run", False) or getattr(cfg, "dry_run", False))
-
+    phash        = args.phash        if args.phash        is not None else bool(cfg.phash)
+    phash_thresh = args.phash_thresh if args.phash_thresh is not None else cfg.phash_thresh  # (default 8 in cfg)
+    ssim_thresh  = args.ssim_thresh  if args.ssim_thresh  is not None else cfg.ssim_thresh   # (default 0.90 in cfg)
+    
     # exts: allow list or 'all' from config; otherwise CLI string
-    exts_source = cfg.exts if cfg.exts is not None else args.exts
+    exts_source = args.exts if args.exts is not None else (cfg.exts or DEFAULT_EXTS)
     exts_set = parse_exts(exts_source)
 
     
@@ -564,6 +713,9 @@ def main(argv=None) -> int:
         min_file_bytes=min_file_bytes,
         enforce_size=bool(getattr(cfg, "enforce_size", True)),
         require_rgb=bool(getattr(cfg, "require_rgb", True)),
+        phash=phash,                
+        phash_thresh=phash_thresh,
+        ssim_thresh=float(ssim_thresh),  
     )
 
     if write_report:
