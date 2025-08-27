@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional  # Iterable not used, remove it
 
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args, add_common_cleanup_args
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_common_cleanup_args,
+    add_common_config_args,
+)
 from src.utils.paths import (
     VALIDATION_REPORTS_DIR,
     CLEANUP_REPORTS_DIR,
@@ -207,10 +211,8 @@ def _plan_moves(
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Quarantine bad files based on a validate.py report (read-only consumer).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val (e.g., policy=strict why=errors). Repeatable.")
-    parser.add_argument("--config", type=Path, default=None,
-                        help="Optional YAML config file (config-first).")
+    
+    add_common_config_args(parser)  # --config, --override, --dry-run
     add_common_logging_args(parser)  # --log-level, --log-file
     add_common_cleanup_args(parser)  # --eval-in, --eval-out, --trained-model
     args = parser.parse_args(argv)

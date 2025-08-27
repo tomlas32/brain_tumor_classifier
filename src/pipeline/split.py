@@ -34,7 +34,12 @@ from typing import Dict, List
 
 from src.utils.paths import DATA_DIR, DEFAULT_DATASET, PROCESSED_DIR
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_exts_arg, 
+    parse_exts, 
+    add_common_config_args
+    )
 
 from src.core.mapping import write_index_remap as mapping_write_index_remap, copy_index_remap
 from src.core.config import build_split_config
@@ -141,12 +146,8 @@ def main(argv=None) -> int:
     parser.add_argument("--clear-dest", action="store_true",
                         help="Delete existing data/{training,validation,testing} before writing.")
     add_exts_arg(parser)
+    add_common_config_args(parser)
     add_common_logging_args(parser)
-    parser.add_argument("--config", type=Path, default=None,
-                        help="Optional YAML config file for split (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val. Repeatable.")
-    parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv or [])
 

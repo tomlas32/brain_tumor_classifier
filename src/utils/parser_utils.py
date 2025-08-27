@@ -200,3 +200,24 @@ def add_common_cleanup_args(parser: argparse.ArgumentParser) -> argparse.Argumen
         help="If --report=latest, prefer a validation report tagged with this suffix (e.g., *_pre.json).",
     )
     return parser
+
+
+def add_common_config_args(
+    parser: argparse.ArgumentParser,
+    *,
+    include_dry_run: bool = False,
+    dry_help: str = "Plan only; do not execute or write artifacts."
+) -> None:
+    """Attach config/override (and optional --dry-run) flags to any parser."""
+    parser.add_argument(
+        "--config", type=Path, default=None,
+        help="Optional YAML config file (config-first)."
+    )
+    parser.add_argument(
+        "--override", "-o", action="append", default=[],
+        help="Override config values as key=val. Repeatable."
+    )
+    if include_dry_run:
+        parser.add_argument(
+            "--dry-run", action="store_true", help=dry_help
+        )

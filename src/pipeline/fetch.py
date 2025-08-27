@@ -66,7 +66,10 @@ import kagglehub
 
 from src.utils.paths import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_common_config_args,
+    )
 from src.utils.paths import DATA_DIR
 
 from src.core.config import build_fetch_config, to_dict
@@ -99,6 +102,8 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
                         help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). "
                             "Repeat for multiple overrides.")
     parser.add_argument("--dry-run", action="store_true", help="Plan only; do not download or write pointers.")
+    
+    add_common_config_args(parser)
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
 

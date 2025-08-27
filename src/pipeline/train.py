@@ -65,6 +65,7 @@ from src.utils.parser_utils import (
     add_common_dataset_args,
     add_common_train_args,
     add_model_args,
+    add_common_config_args,
 )
 from src.train.runner import TrainRunnerInputs, run as run_training
 
@@ -93,20 +94,14 @@ def make_parser_train() -> argparse.ArgumentParser:
     add_common_train_args(parser)     # epochs, lr, weight_decay, scheduler, amp, etc.
     add_model_args(parser)            # model name + pretrained flag
     add_common_logging_args(parser)   # log level/file
+    # shared config flags: --config, --override, `--dry-run`
+    add_common_config_args(parser)
     parser.add_argument("--mapping-pointer", type=Path, default=None,
                     help="Mapping pointer dir or file (preferred). Overrides --index-remap/config.data.mapping_path.")
 
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for training.")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values: key=val (e.g., model.name=resnet50)")
     parser.add_argument("--index-remap", type=Path, default=None,
     help="(Deprecated) Prefer config.data.mapping_path. If provided, overrides config.")
-    parser.add_argument(
-    "--dry-run",
-    action="store_true",
-    help="Plan only; do not start training or write checkpoints."
-)
+    
 
     return parser
 

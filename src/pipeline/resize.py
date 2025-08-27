@@ -63,7 +63,12 @@ import cv2
 import numpy as np
 
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_exts_arg, 
+    parse_exts,
+    add_common_config_args,
+    )
 from src.utils.paths import DATA_DIR, MERGED_DIR, PROCESSED_DIR
 
 from src.core.config import build_resize_config, to_dict
@@ -237,12 +242,8 @@ def main(argv=None) -> int:
     parser.add_argument("--test-out",  type=Path, default=None,
                         help="(Optional) legacy testing output root; omitted in canonical flow.")
     parser.add_argument("--size", type=int, default=224, help="Output square size in pixels (e.g., 224).")
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for resize (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val (e.g., size=256 exts=all). "
-                            "Repeat for multiple overrides.")
-    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not split files/create dir.")
+    
+    add_common_config_args(parser)   # --config, --override
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)

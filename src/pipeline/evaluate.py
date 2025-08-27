@@ -39,7 +39,11 @@ from datetime import datetime, timezone
 import os as _os
 
 from src.utils.logging_utils import get_logger, configure_logging
-from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_common_eval_args,
+    add_common_config_args,
+)
 from src.utils.paths import OUTPUTS_DIR
 
 from src.core.env import bootstrap_env, log_env_once
@@ -71,10 +75,6 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for evaluation.")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values: key=val (e.g., io.top_per_class=8)")
     parser.add_argument(
         "--mapping-path",
         type=Path,
@@ -99,8 +99,8 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mapping-pointer", type=Path, default=None,
                     help="Mapping pointer dir or file (preferred). Overrides --mapping-path/config.data.mapping_path.")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Plan only; no model loading, no metrics, no artifacts.") 
+    
+    add_common_config_args(parser)   # --config, --override, --dry-run
     add_common_eval_args(parser)     # --eval-in, --eval-out, --trained-model
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
