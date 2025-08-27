@@ -570,7 +570,13 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Plan only; do not open images or write a report.")
     # default ON
-    parser.set_defaults(write_report=None)
+    parser.set_defaults(
+        write_report=None,        
+        dup_check=None,          
+        phash=None,                
+        phash_thresh=None,         
+        ssim_thresh=None,          
+    )
     parser.add_argument("--report-tag", type=str, default=None,
                     help="Optional tag to append to report filename, e.g. 'pre' or 'post'.")
     parser.add_argument("--phash", dest="phash", action="store_true",

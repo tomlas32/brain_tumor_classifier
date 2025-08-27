@@ -2,37 +2,51 @@
 Typer-based CLI façade for the pipeline.
 
 Each command:
-- Collects arguments (CLI flags, --config YAML, --override key=val).
+- Collects arguments (CLI flags, optional --config YAML, optional --override key=val).
 - Dispatches into the corresponding stage module via its main(argv).
 - Ensures structured logging with a dispatch entry (stage + argv).
+
+IMPORTANT:
+This CLI is *config-first*. Any option that also exists in a stage YAML defaults
+to None and is only forwarded if explicitly provided — so the CLI will NOT
+silently override your YAML values.
 """
 
-
-import typer
 from typing import Optional, List
 from pathlib import Path
+import typer
 
-from src.utils.paths import DATA_DIR, MODELS_DIR, OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
-from src.utils.paths import DEFAULT_DATASET, DEFAULT_INDEX_REMAP
+from src.utils.paths import (
+    DATA_DIR,
+    MODELS_DIR,
+    OUTPUTS_DIR,
+    MERGED_DIR,
+    PROCESSED_DIR,
+    DEFAULT_DATASET,
+    DEFAULT_INDEX_REMAP,
+)
 from src.utils.parser_utils import DEFAULT_EXTS
 from src.utils.logging_utils import get_logger
 
-
-app = typer.Typer()
-
+app = typer.Typer(add_completion=False)
 log = get_logger(__name__)
 
 
+# ---------------------------
+# MERGE
+# ---------------------------
 @app.command()
 def merge(
-    dataset: str = DEFAULT_DATASET,
+    dataset: Optional[str] = None,
     pointer: Optional[Path] = None,
-    exts: str = DEFAULT_EXTS,
-    clear_dest: bool = False,
+    exts: Optional[str] = None,
+    clear_dest: Optional[bool] = None,
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option([], "--override", "-o",
+    override: List[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., clear_dest=true exts=all). Repeatable."),
     dry_run: bool = False,
 ):
@@ -41,22 +55,11 @@ def merge(
 
         data/merged/<class>/*
 
-    - Reads the latest fetch pointer (or --pointer).
-    - Scans both roots, filters by --exts (use 'all' to accept any).
-    - Copies into MERGED_DIR (optionally clearing it first).
-    - Writes a manifest under outputs/merge/.
+    YAML-first. Only explicitly-set flags override YAML.
     """
     from src.pipeline import merge as merge_mod
 
-    argv = [
-        "--dataset", dataset,
-        "--exts", exts,
-        "--log-level", log_level,
-    ]
-    if pointer:
-        argv += ["--pointer", str(pointer)]
-    if clear_dest:
-        argv += ["--clear-dest"]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
@@ -66,257 +69,231 @@ def merge(
     if dry_run:
         argv += ["--dry-run"]
 
+    # Only forward overrides when explicitly provided
+    if dataset is not None:
+        argv += ["--dataset", dataset]
+    if exts is not None:
+        argv += ["--exts", exts]
+    if pointer is not None:
+        argv += ["--pointer", str(pointer)]
+    if clear_dest is True:
+        argv += ["--clear-dest"]
+    elif clear_dest is False:
+        argv += ["--no-clear-dest"]
+
     log.info("cli.dispatch", extra={"stage": "merge", "argv": argv})
-    code = merge_mod.main(argv)
+    code = int(merge_mod.main(argv))
     raise typer.Exit(code)
 
 
+# ---------------------------
+# FETCH
+# ---------------------------
 @app.command()
 def fetch(
-    dataset: str = DEFAULT_DATASET,
-    cache_dir: Path = DATA_DIR,
-    write_pointer: bool = True,
+    dataset: Optional[str] = None,
+    cache_dir: Optional[Path] = None,
+    write_pointer: Optional[bool] = None,
     pointer_dir: Optional[Path] = None,
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option([], "--override", "-o",
+    override: List[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). Repeatable."),
     dry_run: bool = False,
 ):
-    
     """
-    Download a Kaggle dataset into the local data directory.
+    Download a Kaggle dataset (via KaggleHub) into DATA_DIR (or custom cache_dir).
+    Optionally write a pointer for downstream stages.
 
-    This command wraps the `fetch.py` pipeline step, downloading the specified
-    Kaggle dataset via KaggleHub into `DATA_DIR` (or a custom location) and
-    optionally writing a pointer JSON for downstream steps.
-
-    Parameters
-    ----------
-    dataset : str, optional
-        Kaggle dataset slug in the form 'owner/dataset'.
-        Defaults to the project's DEFAULT_DATASET.
-    cache_dir : Path, optional
-        Directory to store the downloaded dataset. Defaults to DATA_DIR.
-    write_pointer : bool, optional
-        If True (default), write `latest.json` and a timestamped history file
-        into the pointer directory.
-    pointer_dir : Path, optional
-        Custom directory for pointer files. Overrides the default
-        `OUTPUTS_DIR/downloads_pointer/<owner>/<slug>/`.
-    log_level : str, optional
-        Logging verbosity. One of: DEBUG, INFO, WARNING, ERROR, CRITICAL.
-    log_file : str, optional
-        Path to a log file. If omitted, logs go to stdout and an auto-named file.
-
-    Examples
-    --------
-    # Download the default dataset into DATA_DIR and write pointer
-    python -m src.cli fetch
-
-    # Download into a custom directory without writing a pointer
-    python -m src.cli fetch --cache-dir /tmp/mydata --write-pointer False
-
-    # Download and write pointer into a custom directory
-    python -m src.cli fetch --pointer-dir /custom/dir
-
+    YAML-first. Only explicitly-set flags override YAML.
     """
     from src.pipeline import fetch as fetch_mod
 
-
-    argv = [
-        "--dataset", dataset,
-        "--cache-dir", str(cache_dir),
-        "--log-level", log_level,
-    ]
-    if not write_pointer:
-        argv += ["--no-pointer"]
-    if pointer_dir is not None:
-        argv += ["--pointer-dir", str(pointer_dir)]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
-    if dry_run:                            
+    if dry_run:
         argv += ["--dry-run"]
 
+    # overrides only when provided
+    if dataset is not None:
+        argv += ["--dataset", dataset]
+    if cache_dir is not None:
+        argv += ["--cache-dir", str(cache_dir)]
+    if write_pointer is True:
+        argv += ["--write-pointer"]
+    elif write_pointer is False:
+        argv += ["--no-write-pointer"]
+    if pointer_dir is not None:
+        argv += ["--pointer-dir", str(pointer_dir)]
+
     log.info("cli.dispatch", extra={"stage": "fetch", "argv": argv})
+    code = int(fetch_mod.main(argv))
+    raise typer.Exit(code)
 
-    code = fetch_mod.main(argv)    # calls fetch.py main(argv)
-    raise typer.Exit(code)         # # propagate exit status to shell/CI
 
+# ---------------------------
+# SPLIT
+# ---------------------------
 @app.command()
 def split(
-    dataset: str = DEFAULT_DATASET,
-    pointer: Optional[Path] = None,
-    test_frac: float = 0.20,
-    val_frac: float = 0.10,   # <-- ADD THIS
-    seed: int = 42,
-    exts: str = DEFAULT_EXTS,
-    clear_dest: bool = False,
+    in_dir: Optional[Path] = None,
+    out_train: Optional[Path] = None,
+    out_test: Optional[Path] = None,
+    val_frac: Optional[float] = None,
+    test_frac: Optional[float] = None,
+    seed: Optional[int] = None,
+    stratify: Optional[bool] = None,
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option([], "--override", "-o",
-        help="Override config values as key=val (e.g., test_frac=0.25 val_frac=0.1 clear_dest=true). Repeatable."),
+    override: List[str] = typer.Option([], "--override", "-o",
+        help="Override config values as key=val (e.g., val_frac=0.2 test_frac=0.1). Repeatable."),
     dry_run: bool = False,
 ):
     """
-    Re-split pooled images into DATA_DIR/training and DATA_DIR/testing.
+    Split a merged dataset into train/val/test pointers.
 
-    Examples:
-    python -m src.cli split                  # use default extensions
-    python -m src.cli split --exts webp      # replace defaults with webp
-    python -m src.cli split --exts +webp,+gif  # add to defaults
+    YAML-first. Only explicitly-set flags override YAML.
     """
     from src.pipeline import split as split_mod
 
-
-    argv = [
-        "--dataset", dataset,
-        "--test-frac", str(test_frac),
-        "--val-frac", str(val_frac),            
-        "--seed", str(seed),
-        "--exts", exts,
-        "--log-level", log_level,
-    ]
-
-    if pointer:
-        argv += ["--pointer", str(pointer)]
-    if clear_dest:
-        argv += ["--clear-dest"]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
-    if dry_run:                            
+    if dry_run:
         argv += ["--dry-run"]
 
+    # overrides only when provided
+    if in_dir is not None:
+        argv += ["--in-dir", str(in_dir)]
+    if out_train is not None:
+        argv += ["--out-train", str(out_train)]
+    if out_test is not None:
+        argv += ["--out-test", str(out_test)]
+    if val_frac is not None:
+        argv += ["--val-frac", str(val_frac)]
+    if test_frac is not None:
+        argv += ["--test-frac", str(test_frac)]
+    if seed is not None:
+        argv += ["--seed", str(seed)]
+    if stratify is True:
+        argv += ["--stratify"]
+    elif stratify is False:
+        argv += ["--no-stratify"]
+
     log.info("cli.dispatch", extra={"stage": "split", "argv": argv})
+    code = int(split_mod.main(argv))
+    raise typer.Exit(code)
 
-    code = split_mod.main(argv)   # calls split.py main(argv)
-    raise typer.Exit(code)        # propagate exit status to shell/CI
-    
 
+# ---------------------------
+# RESIZE
+# ---------------------------
 @app.command()
 def resize(
-    size: int = 224,
-    train_in_dir: Path = MERGED_DIR,       # data/merged
-    train_out_dir: Path = PROCESSED_DIR,   # data/processed
-    test_in_dir: Optional[Path] = None,    # legacy optional
-    test_out_dir: Optional[Path] = None,   # legacy optional
-    exts: str = DEFAULT_EXTS,
+    size: Optional[int] = None,
+    train_in_dir: Optional[Path] = None,      # e.g., MERGED_DIR
+    train_out_dir: Optional[Path] = None,     # e.g., PROCESSED_DIR
+    test_in_dir: Optional[Path] = None,
+    test_out_dir: Optional[Path] = None,
+    exts: Optional[str] = None,
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option([], "--override", "-o",
+    override: List[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., size=256 exts=all). Repeatable."),
     dry_run: bool = False,
-
 ):
     """
-    Resize and pad images in training and testing directories to a fixed square size.
+    Resize/pad images to a fixed square size (aspect preserved via padding).
 
-    This wraps the `resize.py` pipeline step and preserves aspect ratio
-    with black padding. Defaults assume `split.py` has been run first.
-
-    Examples:
-    python -m src.cli resize                       # default size 224, default exts
-    python -m src.cli resize --size 256            # change output size
-    python -m src.cli resize --exts all            # accept all file extensions
-    python -m src.cli resize --exts +webp,+gif     # add extra extensions to defaults
+    YAML-first. Only explicitly-set flags override YAML.
     """
     from src.pipeline import resize as resize_mod
 
-
-    argv = [
-        "--size", str(size),
-        "--train-in", str(train_in_dir),
-        "--train-out", str(train_out_dir),
-        "--exts", exts,
-        "--log-level", log_level,
-    ]
-
-    if test_in_dir:  argv += ["--test-in", str(test_in_dir)]
-    if test_out_dir: argv += ["--test-out", str(test_out_dir)]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
-    if dry_run:                            
+    if dry_run:
         argv += ["--dry-run"]
 
+    # overrides only when provided
+    if size is not None:
+        argv += ["--size", str(size)]
+    if train_in_dir is not None:
+        argv += ["--train-in", str(train_in_dir)]
+    if train_out_dir is not None:
+        argv += ["--train-out", str(train_out_dir)]
+    if test_in_dir is not None:
+        argv += ["--test-in", str(test_in_dir)]
+    if test_out_dir is not None:
+        argv += ["--test-out", str(test_out_dir)]
+    if exts is not None:
+        argv += ["--exts", exts]
+
     log.info("cli.dispatch", extra={"stage": "resize", "argv": argv})
+    code = int(resize_mod.main(argv))
+    raise typer.Exit(code)
 
-    code = resize_mod.main(argv)   # calls resize.py main(argv)
-    raise typer.Exit(code)        # propagate exit status to shell/CI
 
-
+# ---------------------------
+# VALIDATE
+# ---------------------------
 @app.command()
 def validate(
     in_dir: Optional[Path] = None,
     index_remap: Optional[Path] = None,
-    size: int = 224,
-    exts: str = typer.Option(
-        DEFAULT_EXTS,
-        help="Comma-separated extensions. Use +ext to add (e.g. '+webp'); use 'all' to accept any."
-    ),
-    dup_check: bool = False,  # default off (hashing can be slow); enable when needed
-    phash: bool = False,
-    phash_thresh: int = 8,
-    ssim_thresh: float = 0.9,
-    fail_on: str = typer.Option("error", help="Fail on: 'error' | 'warning' | 'never'"),
-    warn_low_std: float = 3.0,
-    min_file_bytes: int = 1024,
+    size: Optional[int] = None,
+    exts: Optional[str] = None,
+    dup_check: Optional[bool] = None,
+    phash: Optional[bool] = None,
+    phash_thresh: Optional[int] = None,
+    ssim_thresh: Optional[float] = None,
+    fail_on: Optional[str] = None,
+    warn_low_std: Optional[float] = None,
+    min_file_bytes: Optional[int] = None,
+    enforce_size: Optional[bool] = None,
+    require_rgb: Optional[bool] = None,
+    write_report: Optional[bool] = None,
+    report_tag: Optional[str] = None,
+    dup_mode: Optional[str] = None,
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option([], "--override", "-o",
+    override: List[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., size=256 exts=all fail_on=warning). Repeatable."),
     dry_run: bool = False,
 ):
     """
-    Validate the integrity and consistency of the resized dataset before training.
+    Validate dataset structure/quality (pre / post). Includes optional duplicate detection.
 
-    This command wraps `src.pipeline.validate.main(argv)` to match the structure
-    and behavior of other pipeline commands, ensuring consistent logging,
-    argument parsing, and exit code handling across both the CLI and standalone usage.
-
-    Examples
-    --------
-    # Validate using defaults (DATA_DIR/training and latest mapping in outputs/mappings/)
-    python -m src.cli validate
-
-    # Validate with duplicate detection enabled
-    python -m src.cli validate --dup-check
-
-    # Fail if any warnings or errors are found
-    python -m src.cli validate --fail-on warning
-
-    # Validate a custom directory and mapping file
-    python -m src.cli validate --in-dir data/training_resized --index-remap outputs/mappings/my_map.json
+    YAML-first. Only explicitly-set flags override YAML.
     """
-
     from src.pipeline import validate as validate_mod
 
-
-    argv = [
-        "--size", str(size),
-        "--exts", exts,
-        "--warn-low-std", str(warn_low_std),
-        "--min-file-bytes", str(min_file_bytes),
-        "--fail-on", fail_on,
-        "--log-level", log_level,
-    ]
-    if dup_check:
-        argv += ["--dup-check"]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
@@ -325,291 +302,333 @@ def validate(
         argv += ["--override", ov]
     if dry_run:
         argv += ["--dry-run"]
+
+    # overrides only when provided
     if in_dir is not None:
         argv += ["--in-dir", str(in_dir)]
     if index_remap is not None:
         argv += ["--index-remap", str(index_remap)]
-    if phash:  
+    if size is not None:
+        argv += ["--size", str(size)]
+    if exts is not None:
+        argv += ["--exts", exts]
+
+    if dup_check is True:
+        argv += ["--dup-check"]
+    elif dup_check is False:
+        argv += ["--no-dup-check"]
+
+    if phash is True:
         argv += ["--phash"]
+    elif phash is False:
+        argv += ["--no-phash"]
+
     if phash_thresh is not None:
         argv += ["--phash-thresh", str(phash_thresh)]
     if ssim_thresh is not None:
         argv += ["--ssim-thresh", str(ssim_thresh)]
 
+    if fail_on is not None:
+        argv += ["--fail-on", fail_on]
+    if warn_low_std is not None:
+        argv += ["--warn-low-std", str(warn_low_std)]
+    if min_file_bytes is not None:
+        argv += ["--min-file-bytes", str(min_file_bytes)]
+
+    if enforce_size is True:
+        argv += ["--enforce-size"]
+    elif enforce_size is False:
+        argv += ["--no-enforce-size"]
+
+    if require_rgb is True:
+        argv += ["--require-rgb"]
+    elif require_rgb is False:
+        argv += ["--no-require-rgb"]
+
+    if write_report is True:
+        argv += ["--write-report"]
+    elif write_report is False:
+        argv += ["--no-write-report"]
+
+    if report_tag is not None:
+        argv += ["--report-tag", report_tag]
+    if dup_mode is not None:
+        argv += ["--dup-mode", dup_mode]
+
     log.info("cli.dispatch", extra={"stage": "validate", "argv": argv})
+    code = int(validate_mod.main(argv))
+    raise typer.Exit(code)
 
-    code = validate_mod.main(argv)   # calls validate.py main(argv)
-    raise typer.Exit(code)           # propagate exit status to shell/CI
 
+# ---------------------------
+# TRAIN
+# ---------------------------
 @app.command()
 def train(
-    # I/O
-    train_in: Path = DATA_DIR / "training",
-    out_models: Path = MODELS_DIR,
-    out_summary: Path = OUTPUTS_DIR / "training",
+    # I/O (YAML-first)
+    train_in: Optional[Path] = None,
+    val_in: Optional[Path] = None,
+    out_models: Optional[Path] = None,
+    out_summary: Optional[Path] = None,
 
-    # data/split
-    val_frac: float = 0.20,
-    image_size: int = 224,
+    # data/split (YAML-first)
+    val_frac: Optional[float] = None,
+    image_size: Optional[int] = None,
 
-    # training
-    batch_size: int = 32,
-    num_workers: int = 4,
-    epochs: int = 15,
-    lr: float = 1e-4,
-    weight_decay: float = 1e-4,
-    step_size: int = 5,
-    gamma: float = 0.5,
-    seed: int = 42,
-    amp: bool = True,
+    # training (YAML-first)
+    batch_size: Optional[int] = None,
+    num_workers: Optional[int] = None,
+    epochs: Optional[int] = None,
+    lr: Optional[float] = None,
+    weight_decay: Optional[float] = None,
+    step_size: Optional[int] = None,
+    gamma: Optional[float] = None,
+    seed: Optional[int] = None,
+    amp: Optional[bool] = None,
 
-    # model
-    model: str = "resnet18",           # choices: resnet18 | resnet34 | resnet50
-    pretrained: bool = True,
-
-    # config-first controls
-    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option(
-        [], "--override", "-o",
-        help="Override config values as key=val (e.g., model.name=resnet50 io.out_models=models/x). "
-             "Repeat for multiple overrides."
-    ),
+    # model (YAML-first)
+    model: Optional[str] = None,
+    pretrained: Optional[bool] = None,
 
     # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
+
+    # config-first
+    config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
+    override: List[str] = typer.Option([], "--override", "-o",
+        help="Override config values: key=val (e.g., model.name=resnet50). Repeatable."),
     dry_run: bool = False,
 ):
     """
-    Train a CNN on the resized training set.
+    Train a CNN on the prepared dataset (config-first).
+    Saves checkpoints and a training summary.
 
-    Wraps `src.training.train.main(argv)` to keep CLI consistent with other steps.
-    Uses the class mapping from `outputs/mappings/latest.json` (written by `split`).
-
-    Examples
-    --------
-    # Default training
-    python -m src.cli train
-
-    # Heavier model, more epochs
-    python -m src.cli train --model resnet50 --epochs 30
-
-    # Change LR/scheduler and disable AMP
-    python -m src.cli train --lr 3e-4 --step-size 10 --gamma 0.3 --amp False
-
-    Config-first usage:
-    -------------------
-    python -m src.cli train --config configs/train.yaml
-    python -m src.cli train --config configs/train.yaml -o model.name=resnet50 -o optim.lr=3e-4
-
-    # Custom paths
-    python -m src.cli train --train-in data/training_resized --out-models models/brain_tumor
+    YAML-first. Only explicitly-set flags override YAML.
     """
-
     from src.pipeline import train as train_mod
 
-
-    argv = [
-        "--train-in", str(train_in),
-        "--val-frac", str(val_frac),
-        "--image-size", str(image_size),
-
-        "--batch-size", str(batch_size),
-        "--num-workers", str(num_workers),
-        "--epochs", str(epochs),
-        "--lr", str(lr),
-        "--weight-decay", str(weight_decay),
-        "--step-size", str(step_size),
-        "--gamma", str(gamma),
-        "--seed", str(seed),
-
-        "--model", model,
-        "--out-models", str(out_models),
-        "--out-summary", str(out_summary),
-
-        "--log-level", log_level,
-    ]
-
-    # booleans as flags (match train.py parser)
-    if not amp:
-        argv += ["--no-amp"]
-    if pretrained:
-        argv += ["--pretrained"]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
-
-    # NEW: config-first pass-through
     if config is not None:
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
     if dry_run:
         argv += ["--dry-run"]
+
+    # overrides only when provided
+    if train_in is not None:
+        argv += ["--train-in", str(train_in)]
+    if val_in is not None:
+        argv += ["--val-in", str(val_in)]
+    if out_models is not None:
+        argv += ["--out-models", str(out_models)]
+    if out_summary is not None:
+        argv += ["--out-summary", str(out_summary)]
+
+    if val_frac is not None:
+        argv += ["--val-frac", str(val_frac)]
+    if image_size is not None:
+        argv += ["--image-size", str(image_size)]
+
+    if batch_size is not None:
+        argv += ["--batch-size", str(batch_size)]
+    if num_workers is not None:
+        argv += ["--num-workers", str(num_workers)]
+    if epochs is not None:
+        argv += ["--epochs", str(epochs)]
+    if lr is not None:
+        argv += ["--lr", str(lr)]
+    if weight_decay is not None:
+        argv += ["--weight-decay", str(weight_decay)]
+    if step_size is not None:
+        argv += ["--step-size", str(step_size)]
+    if gamma is not None:
+        argv += ["--gamma", str(gamma)]
+    if seed is not None:
+        argv += ["--seed", str(seed)]
+    if amp is True:
+        argv += ["--amp"]
+    elif amp is False:
+        argv += ["--no-amp"]
+
+    if model is not None:
+        argv += ["--model", model]
+    if pretrained is True:
+        argv += ["--pretrained"]
+    elif pretrained is False:
+        argv += ["--no-pretrained"]
 
     log.info("cli.dispatch", extra={"stage": "train", "argv": argv})
-
-    code = train_mod.main(argv)   # calls src/training/train.py:main(argv)
+    code = int(train_mod.main(argv))
     raise typer.Exit(code)
 
+
+# ---------------------------
+# EVALUATE
+# ---------------------------
 @app.command()
 def evaluate(
-    eval_in: Path = DATA_DIR / "testing",
-    eval_out: Path = OUTPUTS_DIR / "evaluation",
-    trained_model: Path = MODELS_DIR / "best_model.pth",
-    model: str = "resnet18",  # resnet18 | resnet34 | resnet50
-    mapping_path: Path = DEFAULT_INDEX_REMAP,
-    image_size: int = 224,
-    batch_size: int = 32,
-    num_workers: int = 4,
-    seed: int = 42,
+    # data
+    eval_in: Optional[Path] = None,
+    image_size: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    num_workers: Optional[int] = None,
+    seed: Optional[int] = None,
+
+    # model
+    name: Optional[str] = None,
+    weights_path: Optional[Path] = None,
+
+    # io & viz
+    eval_out: Optional[Path] = None,
+    top_per_class: Optional[int] = None,
+    no_galleries: Optional[bool] = None,
+    no_gradcam: Optional[bool] = None,
+
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
-    # config-first controls
+
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option(
-        [], "--override", "-o",
-        help="Override config values as key=val (e.g., io.top_per_class=10 io.make_gradcam=false). "
-             "Repeat for multiple overrides."
-    ),
-    top_per_class: int = typer.Option(6, help="Items per true class for galleries/Grad-CAM."),
-    no_galleries: bool = typer.Option(False, help="Disable plain image galleries."),
-    no_gradcam: bool = typer.Option(False, help="Disable Grad-CAM overlays."),
-    dry_run: bool = False, 
+    override: List[str] = typer.Option([], "--override", "-o",
+        help="Override config values: key=val (e.g., io.eval_out=outputs/evaluation). Repeatable."),
+    dry_run: bool = False,
 ):
     """
-    Evaluate a trained model on the resized test set.
+    Evaluate a trained model on a test set. Can generate galleries and Grad-CAMs.
 
-    This wraps `src.pipeline.evaluate.main(argv)` to ensure consistent CLI behavior.
-
-    Examples
-    --------
-    # Default evaluation
-    python -m src.cli evaluate
-
-    Config-first usage:
-    -------------------
-    python -m src.cli evaluate --config configs/eval.yaml
-    python -m src.cli evaluate --config configs/eval.yaml -o io.top_per_class=10 -o io.make_gradcam=false
-
-    # Custom model checkpoint
-    python -m src.cli evaluate --trained-model models/resnet50_best.pth --model resnet50
-
-    # Change batch size and workers
-    python -m src.cli evaluate --batch-size 128 --num-workers 8
+    YAML-first. Only explicitly-set flags override YAML.
     """
-
     from src.pipeline import evaluate as evaluate_mod
 
-
-    argv = [
-        "--eval-in", str(eval_in),
-        "--eval-out", str(eval_out),
-        "--trained-model", str(trained_model),
-        "--model", model,
-        "--mapping-path", str(mapping_path),
-        "--image-size", str(image_size),
-        "--batch-size", str(batch_size),
-        "--num-workers", str(num_workers),
-        "--seed", str(seed),
-        "--log-level", log_level,
-        
-    ]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
-    
-    # config-first pass-through
     if config is not None:
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
-    argv += ["--top-per-class", str(top_per_class)]
-    if no_galleries:
-        argv += ["--no-galleries"]
-    if no_gradcam:
-        argv += ["--no-gradcam"]
     if dry_run:
         argv += ["--dry-run"]
 
-    log.info("cli.dispatch", extra={"stage": "evaluate", "argv": argv})
+    # overrides only when provided
+    if eval_in is not None:
+        argv += ["--eval-in", str(eval_in)]
+    if image_size is not None:
+        argv += ["--image-size", str(image_size)]
+    if batch_size is not None:
+        argv += ["--batch-size", str(batch_size)]
+    if num_workers is not None:
+        argv += ["--num-workers", str(num_workers)]
+    if seed is not None:
+        argv += ["--seed", str(seed)]
 
-    code = evaluate_mod.main(argv)  # calls src/pipeline/evaluate.py:main(argv)
+    if name is not None:
+        argv += ["--name", name]
+    if weights_path is not None:
+        argv += ["--weights-path", str(weights_path)]
+
+    if eval_out is not None:
+        argv += ["--eval-out", str(eval_out)]
+    if top_per_class is not None:
+        argv += ["--top-per-class", str(top_per_class)]
+    if no_galleries is True:
+        argv += ["--no-galleries"]
+    elif no_galleries is False:
+        argv += ["--galleries"]
+    if no_gradcam is True:
+        argv += ["--no-gradcam"]
+    elif no_gradcam is False:
+        argv += ["--gradcam"]
+
+    log.info("cli.dispatch", extra={"stage": "evaluate", "argv": argv})
+    code = int(evaluate_mod.main(argv))
     raise typer.Exit(code)
 
+
+# ---------------------------
+# CLEANUP (quarantine based on validate report)
+# ---------------------------
 @app.command()
 def cleanup(
-    # runtime knobs (match other commands' style)
-    report: str = "latest",
-    policy: str = "strict",            # strict | within_class | report_only
-    why: str = "errors",               # errors | warnings | both
-    dry_run: bool = False,
-
-    # logging (same names as others)
+    report: Optional[str] = None,             # e.g., "latest" or a specific path
+    policy: Optional[str] = None,             # "strict" | "within_class" | "report_only"
+    why: Optional[str] = None,                # "errors" | "warnings" | "both"
+    report_tag: Optional[str] = None,
+    # logging
     log_level: str = "INFO",
     log_file: Optional[str] = None,
-
-    # config‑first support (pass-through, stage resolves YAML)
+    # config-first
     config: Optional[Path] = typer.Option(None, help="Optional YAML config file (config-first)."),
-    override: list[str] = typer.Option([], "--override", "-o",
+    override: List[str] = typer.Option([], "--override", "-o",
         help="Override config values as key=val (e.g., policy=within_class why=both). Repeatable."),
-    report_tag: Optional[str] = None,
+    dry_run: bool = False,
 ):
     """
-    Quarantine bad files based on a validate.py report.
-    By default, consumes the *latest* report in outputs/validation_reports/.
+    Quarantine bad files based on a validate.py report (usually the latest pre/post).
+    YAML-first. Only explicitly-set flags override YAML.
     """
     from src.pipeline import cleanup as cleanup_mod
 
-    argv = [
-        "--report", report,
-        "--policy", policy,
-        "--why", why,
-        "--log-level", log_level,
-    ]
-    if dry_run:
-        argv += ["--dry-run"]
+    argv: List[str] = ["--log-level", log_level]
     if log_file:
         argv += ["--log-file", str(log_file)]
     if config is not None:
         argv += ["--config", str(config)]
     for ov in override or []:
         argv += ["--override", ov]
-    if report_tag:
+    if dry_run:
+        argv += ["--dry-run"]
+
+    # overrides only when provided
+    if report is not None:
+        argv += ["--report", report]
+    if policy is not None:
+        argv += ["--policy", policy]
+    if why is not None:
+        argv += ["--why", why]
+    if report_tag is not None:
         argv += ["--report-tag", report_tag]
 
     log.info("cli.dispatch", extra={"stage": "cleanup", "argv": argv})
-    code = cleanup_mod.main(argv)
+    code = int(cleanup_mod.main(argv))
     raise typer.Exit(code)
 
+
+# ---------------------------
+# PIPELINE (master orchestrator)
+# ---------------------------
 @app.command()
 def pipeline(
     # Master config + overrides
     config: Optional[Path] = typer.Option(
-        None, help="Master YAML for the full pipeline (fetch → merge → validate (pre) → cleanup → resize → validate (post) → split → train → evaluate)."
+        None,
+        help="Master YAML for the full pipeline (fetch → merge → validate (pre) → cleanup "
+             "→ resize → validate (post) → split → train → evaluate).",
     ),
     override: List[str] = typer.Option(
         [], "--override", "-o",
-        help="Override master config: dotted keys like train.data.image_size=256 "
-             "(repeatable)."
+        help="Override master config: dotted keys like train.data.image_size=256 (repeatable).",
     ),
-
     # Execution controls
-    dry_run: bool = typer.Option(
-        False, help="Plan only; do not run any stage."
-    ),
+    dry_run: bool = typer.Option(False, help="Plan only; do not run any stage."),
     skip: List[str] = typer.Option(
-        [], help="Stages to skip entirely (ignored if --resume-from is set). "
-                 "Choices: fetch, split, resize, validate, train, evaluate"
+        [],
+        help="Stages to skip entirely (ignored if --resume-from is set). "
+             "Choices: fetch, merge, validate_pre, cleanup, resize, validate_post, split, train, evaluate",
     ),
-    resume_from: Optional[str] = typer.Option(
-        None, help="Start from this stage; earlier stages are skipped."
-    ),
+    resume_from: Optional[str] = typer.Option(None, help="Start from this stage; earlier stages are skipped."),
 ):
     """
-    Run the full pipeline from a single master config.
+    Run the full pipeline via a single master YAML. Config-first.
 
     Examples
     --------
-    - Dry run (show plan only):
+    - Dry run (plan only):
       python -m src.cli pipeline --config configs/pipeline.yaml --dry-run
 
     - Full run:
@@ -621,15 +640,12 @@ def pipeline(
     - Skip fetch/split:
       python -m src.cli pipeline --config configs/pipeline.yaml --skip fetch --skip split
 
-    - Tweak with overrides:
+    - Tweak specific keys:
       python -m src.cli pipeline --config configs/pipeline.yaml \
-        -o train.aug.rotate_deg=5 -o evaluate.io.top_per_class=10
+        -o train.loop.epochs=20 -o evaluate.io.top_per_class=8
     """
-
     from src.pipeline.orchestrator import run_pipeline
 
-
-    # Structured dispatch log 
     argv_preview = {
         "config": str(config) if config else None,
         "override": override,
