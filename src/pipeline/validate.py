@@ -459,7 +459,7 @@ def validate_dataset(
 
                                 if not same_class or score < ssim_thresh:
                                     # Keep the visibility log, but do not record a warning
-                                    log.info(f"[PHASH_REJECTED] {p} vs {prev_path} (d={d}, ssim={score:.3f})")
+                                    log.debug(f"[PHASH_REJECTED] {p} vs {prev_path} (d={d}, ssim={score:.3f})")
                                     continue
 
                                 # Track the best acceptable candidate (lowest Hamming, then highest SSIM)
