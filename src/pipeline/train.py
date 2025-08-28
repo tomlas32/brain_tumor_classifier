@@ -65,6 +65,8 @@ from src.utils.parser_utils import (
     add_common_dataset_args,
     add_common_train_args,
     add_model_args,
+    add_common_config_args,
+    add_mapping_args,
 )
 from src.train.runner import TrainRunnerInputs, run as run_training
 
@@ -87,27 +89,17 @@ def make_parser_train() -> argparse.ArgumentParser:
     python -m src.pipeline.train --train-in data/training_resized --test-in data/testing_resized
     """
     parser = argparse.ArgumentParser(description="Train a CNN on resized MRI images.")
-    parser.add_argument("--image-size", type=int, default=224,
+    parser.add_argument("--image-size", type=int, default=None,
                         help="Square size after resize/pad (must match your preprocessing)")
     add_common_dataset_args(parser)   # roots, batch size, workers, val_frac, seed, out dirs, etc.
     add_common_train_args(parser)     # epochs, lr, weight_decay, scheduler, amp, etc.
     add_model_args(parser)            # model name + pretrained flag
     add_common_logging_args(parser)   # log level/file
-    parser.add_argument("--mapping-pointer", type=Path, default=None,
-                    help="Mapping pointer dir or file (preferred). Overrides --index-remap/config.data.mapping_path.")
-
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for training.")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values: key=val (e.g., model.name=resnet50)")
-    parser.add_argument("--index-remap", type=Path, default=None,
-    help="(Deprecated) Prefer config.data.mapping_path. If provided, overrides config.")
-    parser.add_argument(
-    "--dry-run",
-    action="store_true",
-    help="Plan only; do not start training or write checkpoints."
-)
-
+    # shared config flags: --config, --override, `--dry-run`
+    add_common_config_args(parser, include_dry_run=True)
+    # Shared mapping flags: --mapping-pointer, --index-remap
+    add_mapping_args(parser)
+    
     return parser
 
 

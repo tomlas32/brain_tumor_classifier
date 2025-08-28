@@ -159,7 +159,9 @@ def configure_logging(
 
     # Root logger setup
     root = logging.getLogger()
-    root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    level_name = log_level if isinstance(log_level, str) and log_level else "INFO"
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    root.setLevel(level)
     root.handlers.clear()
 
     formatter = SafeExtraFormatter(fmt)

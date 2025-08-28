@@ -25,7 +25,12 @@ from src.utils.paths import DATA_DIR, OUTPUTS_DIR, MERGED_DIR
 from src.core.config import build_merge_config, to_dict
 from src.utils.paths import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_exts_arg, 
+    parse_exts,
+    add_common_config_args,
+    )
 from src.core.artifacts import read_fetch_pointer
 
 log = get_logger(__name__)
@@ -101,17 +106,14 @@ def _write_manifest(manifest: dict) -> Path:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Merge Kaggle Training/Testing into data/merged.")
-    parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
+    parser.add_argument("--dataset", type=str, default=None,
                         help="Kaggle slug (owner/dataset) used to auto-locate the fetch pointer.")
     parser.add_argument("--pointer", type=Path, default=None,
                         help="Optional explicit path to the fetch pointer JSON (overrides --dataset).")
-    parser.add_argument("--config", type=Path, default=None,
-                        help="Optional YAML config file for merge (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val (e.g., clear_dest=true exts=all). Repeatable.")
     parser.add_argument("--clear-dest", action="store_true",
                         help="Delete all existing files/dirs in DATA_DIR/merged before writing.")
-    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not write files.")
+    
+    add_common_config_args(parser, include_dry_run=True)         # --config, --override, --dry-run
     add_common_logging_args(parser)        # --log-level, --log-file
     add_exts_arg(parser)                   # --exts with your '+webp' semantics
     args = parser.parse_args(argv)

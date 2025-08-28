@@ -66,7 +66,10 @@ import kagglehub
 
 from src.utils.paths import DEFAULT_DATASET
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_common_config_args,
+    )
 from src.utils.paths import DATA_DIR
 
 from src.core.config import build_fetch_config, to_dict
@@ -85,20 +88,16 @@ def make_parser_fetch_kaggle() -> argparse.ArgumentParser:
     python -m src.pipeline.fetch --cache-dir data --no-pointer
     """
     parser = argparse.ArgumentParser(description="Fetch Kaggle dataset with KaggleHub")
-    parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
-                        help=f"Kaggle slug, e.g. 'owner/dataset' (default: {DEFAULT_DATASET})")
-    parser.add_argument("--cache-dir", type=Path, default=DATA_DIR,
+    parser.add_argument("--dataset", type=str, default=None,
+                        help="Kaggle slug, e.g. 'owner/dataset'")
+    parser.add_argument("--cache-dir", type=Path, default=None,
                         help="Directory to store the downloaded dataset (default: DATA_DIR)")
     parser.add_argument("--no-pointer", action="store_true",
                         help="Skip writing outputs/downloads_pointer/.../latest.json")
     parser.add_argument("--pointer-dir", type=Path, default=None,
                         help="Override destination directory for pointer JSONs")
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for fetch (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val (e.g., dataset=owner/slug write_pointer=false). "
-                            "Repeat for multiple overrides.")
-    parser.add_argument("--dry-run", action="store_true", help="Plan only; do not download or write pointers.")
+
+    add_common_config_args(parser, include_dry_run=True)  # --config, --override, `--dry-run`
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
 
@@ -166,7 +165,7 @@ def main(argv=None) -> int:
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     dataset = cfg.dataset or args.dataset
-    cache_dir = Path(cfg.cache_dir) if cfg.cache_dir else Path(args.cache_dir)
+    cache_dir = Path(cfg.cache_dir or args.cache_dir or DATA_DIR)
     write_pointer = bool(cfg.write_pointer)
     pointer_dir = cfg.pointer_dir or args.pointer_dir
 

@@ -51,7 +51,14 @@ from skimage.metrics import structural_similarity as ssim
 from datetime import datetime, timezone
 
 from src.utils.logging_utils import get_logger, configure_logging
-from src.utils.parser_utils import parse_exts, add_common_logging_args, DEFAULT_EXTS
+from src.utils.parser_utils import (
+    parse_exts, 
+    add_common_logging_args, 
+    add_common_config_args,
+    add_dataset_args, 
+    add_mapping_args,
+    DEFAULT_EXTS
+    )
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR, MERGED_DIR, PROCESSED_DIR
 
 from src.core.mapping import read_index_remap, expected_classes_from_remap
@@ -539,13 +546,6 @@ def main(argv=None) -> int:
     3) Run validation and apply `--fail-on` policy for exit code.
     """
     parser = argparse.ArgumentParser(description="Validate a dataset (pre or post processing)")
-    parser.add_argument("--in-dir", type=Path, default=None,
-        help="Dataset root to validate. If omitted: uses data/merged for pre or data/processed for post (based on config).")
-    parser.add_argument("--index-remap", type=Path, default=None,
-                    help="Optional path to index_remap.json (allowed classes). If omitted, label checks are skipped.")
-    parser.add_argument("--size", type=int, default=None, help="Expected image size (square)")
-    parser.add_argument("--exts", type=str, default=None,
-                        help="Comma-separated extensions. Use +ext to add; 'all' to accept any.")
     parser.add_argument("--dup-check", dest="dup_check", action="store_true", help="Enable duplicate detection")
     parser.add_argument("--no-dup-check", dest="dup_check", action="store_false", help="Disable duplicate detection")
     parser.add_argument("--warn-low-std", type=float, default=None,
@@ -560,15 +560,6 @@ def main(argv=None) -> int:
     action="store_false",
     help="Disable writing a JSON validation report to outputs/validation_reports/ (enabled by default).",
 )
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for validate (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val (e.g., size=256 exts=all fail_on=warning). "
-                            "Repeat for multiple overrides.")
-    parser.add_argument("--mapping-pointer", type=Path, default=None,
-                    help="Mapping pointer dir or file (preferred). If provided, overrides --index-remap.")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Plan only; do not open images or write a report.")
     # default ON
     parser.set_defaults(
         write_report=None,        
@@ -588,9 +579,12 @@ def main(argv=None) -> int:
     parser.add_argument("--ssim-thresh", type=float, default=None,
                     help="SSIM confirmation threshold for pHash near-duplicates (default: 0.90)")
 
-
-
-
+    # shared mapping flags: --index-remap, --mapping-pointer
+    add_mapping_args(parser)
+    # shared dataset flags: --in-dir, --size, --exts
+    add_dataset_args(parser, with_size=True, with_exts=True)
+    # shared config flags: --config, --override, `--dry-run`
+    add_common_config_args(parser, include_dry_run=True)
     # shared logging flags: --log-level, --log-file
     add_common_logging_args(parser)
 

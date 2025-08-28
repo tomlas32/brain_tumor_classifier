@@ -39,7 +39,11 @@ from datetime import datetime, timezone
 import os as _os
 
 from src.utils.logging_utils import get_logger, configure_logging
-from src.utils.parser_utils import add_common_logging_args, add_common_eval_args
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_common_eval_args,
+    add_common_config_args,
+)
 from src.utils.paths import OUTPUTS_DIR
 
 from src.core.env import bootstrap_env, log_env_once
@@ -64,21 +68,17 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description="Evaluate a trained classifier on a test set.")
     parser.add_argument("--image-size", type=int, 
-                        default=224, help="Square size used in preprocessing")
+                        default=None, help="Square size used in preprocessing")
     parser.add_argument("--model", 
                         choices=["resnet18","resnet34","resnet50"], 
-                        default="resnet18")
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--config", type=Path, default=None,
-                    help="Optional YAML config file for evaluation.")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values: key=val (e.g., io.top_per_class=8)")
+                        default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
         "--mapping-path",
         type=Path,
-        default=OUTPUTS_DIR / "mappings" / "latest.json",
+        default=None,
         help="Path to index remap mapping JSON (default: OUTPUTS_DIR/mappings/latest.json)",
     )
     parser.add_argument(
@@ -99,8 +99,8 @@ def make_parser_evaluate() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mapping-pointer", type=Path, default=None,
                     help="Mapping pointer dir or file (preferred). Overrides --mapping-path/config.data.mapping_path.")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Plan only; no model loading, no metrics, no artifacts.") 
+    
+    add_common_config_args(parser, include_dry_run=True)   # --config, --override, --dry-run
     add_common_eval_args(parser)     # --eval-in, --eval-out, --trained-model
     add_common_logging_args(parser)  # --log-level, --log-file
     return parser
@@ -142,13 +142,13 @@ def main(argv=None):
     # ---- DRY RUN ----
     if dry:
         
-        eval_in = Path(cfg.data.eval_in) if cfg.data.eval_in else Path(args.eval_in)
-        mapping_path = Path(cfg.data.mapping_path) if cfg.data.mapping_path else Path(args.mapping_path)
-        weights_path = Path(cfg.model.weights_path) if cfg.model.weights_path else Path(args.trained_model)
+        eval_in      = Path(cfg.data.eval_in) if cfg.data.eval_in else (Path(args.eval_in) if args.eval_in else None)
+        mapping_path = Path(cfg.data.mapping_path) if cfg.data.mapping_path else (Path(args.mapping_path) if args.mapping_path else None)
+        weights_path = Path(cfg.model.weights_path) if cfg.model.weights_path else (Path(args.trained_model) if args.trained_model else None)
 
-        eval_exists = eval_in.exists()
-        mapping_exists = mapping_path.exists()
-        weights_exists = weights_path.exists()
+        eval_exists    = eval_in.exists() if eval_in else False
+        mapping_exists = mapping_path.exists() if mapping_path else False
+        weights_exists = weights_path.exists() if weights_path else False
 
         # tiny inline counter; no helpers, no image I/O
         per_class = {}

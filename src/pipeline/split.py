@@ -34,7 +34,12 @@ from typing import Dict, List
 
 from src.utils.paths import DATA_DIR, DEFAULT_DATASET, PROCESSED_DIR
 from src.utils.logging_utils import configure_logging, get_logger
-from src.utils.parser_utils import add_common_logging_args, add_exts_arg, parse_exts
+from src.utils.parser_utils import (
+    add_common_logging_args, 
+    add_exts_arg, 
+    parse_exts, 
+    add_common_config_args
+    )
 
 from src.core.mapping import write_index_remap as mapping_write_index_remap, copy_index_remap
 from src.core.config import build_split_config
@@ -129,24 +134,20 @@ def _write_index_and_pointer(
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Split data/processed into train/val/test.")
-    parser.add_argument("--dataset", type=str, default=DEFAULT_DATASET,
+    parser.add_argument("--dataset", type=str, default=None,
                         help="Used only to label mapping pointers (owner/slug).")
-    parser.add_argument("--test-frac", type=float, default=0.20,
+    parser.add_argument("--test-frac", type=float, default=None,
                         help="Fraction per class for final test set (0-1).")
-    parser.add_argument("--val-frac", type=float, default=0.10,
+    parser.add_argument("--val-frac", type=float, default=None,
                         help="Fraction per class for validation set (0-1).")
-    parser.add_argument("--balance", choices=["none", "equalize"], default="none",
+    parser.add_argument("--balance", choices=["none", "equalize"], default=None,
                     help="none: keep original class sizes; equalize: cap each class to the smallest class before splitting.")
-    parser.add_argument("--seed", type=int, default=42, help="RNG seed.")
+    parser.add_argument("--seed", type=int, default=None, help="RNG seed.")
     parser.add_argument("--clear-dest", action="store_true",
                         help="Delete existing data/{training,validation,testing} before writing.")
     add_exts_arg(parser)
+    add_common_config_args(parser, include_dry_run=True)
     add_common_logging_args(parser)
-    parser.add_argument("--config", type=Path, default=None,
-                        help="Optional YAML config file for split (config-first).")
-    parser.add_argument("--override", action="append", default=[],
-                        help="Override config values as key=val. Repeatable.")
-    parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv or [])
 
@@ -166,6 +167,12 @@ def main(argv=None) -> int:
     clear_dest = bool(getattr(cfg, "clear_dest", False) or getattr(args, "clear_dest", False))
 
     exts = parse_exts(args.exts)  # set[str] or empty set for "all"
+
+    # Guard: fractions must be provided by YAML or CLI
+    if test_frac is None or val_frac is None:
+        log.error("split.fracs_missing", extra={"test_frac": test_frac, "val_frac": val_frac})
+        print("❌ Missing fractions: please set data.test_frac and data.val_frac in YAML or via CLI.")
+        return 2
 
     if not (0.0 <= test_frac < 1.0 and 0.0 <= val_frac < 1.0 and test_frac + val_frac < 1.0):
         log.error("split.invalid_fracs", extra={"test_frac": test_frac, "val_frac": val_frac})
