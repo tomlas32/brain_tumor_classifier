@@ -51,6 +51,7 @@ from __future__ import annotations
 from pathlib import Path
 import argparse, os
 from datetime import datetime, timezone
+from typing import Optional
 
 from src.utils.logging_utils import configure_logging, get_logger
 
@@ -113,28 +114,36 @@ def main(argv=None) -> int:
     parser = make_parser_train()
     args = parser.parse_args(argv)
 
+    # ---- Build config ----
+    cfg = build_train_config(args.config, overrides=args.override)
+    
     # Run-aware logging (ties logs across stages)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="train")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="train")
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
 
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="train",
+    )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
+    
     bootstrap_env(seed=args.seed)
     log_env_once()
 
-    # ---- Build config ----
-    cfg = build_train_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
+    # Resolve training/validation inputs
+    train_in = Path(cfg.data.train_in) if cfg.data.train_in else args.train_in
+    val_in = Path(cfg.val_in) if getattr(cfg, "val_in", None) else None
+    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
 
     mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
     mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
 
     # ---- Dry run (plan only) ----
     if args.dry_run or getattr(cfg, "dry_run", False):
-        train_in = Path(cfg.data.train_in) if cfg.data.train_in else Path(args.train_in) if args.train_in else None
-        val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None 
-        mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
 
         train_exists = train_in.exists() if train_in else False
         val_exists = val_in.exists() if val_in else False
@@ -218,17 +227,12 @@ def main(argv=None) -> int:
         log.error("train.mapping_missing", extra={"hint": "Provide data.mapping_pointer or data.mapping_path"})
         return 2
     
-    # Prefer pre-split validation set when provided; otherwise use val_frac
-    val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None
-    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
-
-
     out_models  = Path(cfg.io.out_models)  if not isinstance(cfg.io.out_models, Path)  else cfg.io.out_models
     out_summary = Path(cfg.io.out_summary) if not isinstance(cfg.io.out_summary, Path) else cfg.io.out_summary
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
         image_size=cfg.data.image_size,
-        train_in=Path(cfg.data.train_in) if cfg.data.train_in else args.train_in,
+        train_in=train_in,
         val_in=val_in,  
         batch_size=cfg.data.batch_size,
         num_workers=cfg.data.num_workers,

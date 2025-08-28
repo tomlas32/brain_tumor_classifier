@@ -118,17 +118,24 @@ def main(argv=None) -> int:
     add_exts_arg(parser)                   # --exts with your '+webp' semantics
     args = parser.parse_args(argv)
 
-    # Structured logging
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="merge")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="merge")
-    t0 = time.time()
-
     # Resolve config (config-first with CLI fallback)
     cfg = build_merge_config(args.config, overrides=args.override)
+
+    # Structured logging
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="merge",
+    )
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+    
+    t0 = time.time()
 
     dataset_slug = os.getenv("DATASET_SLUG", cfg.dataset or args.dataset)
     pointer = cfg.pointer or args.pointer or _pointer_path_for(dataset_slug)

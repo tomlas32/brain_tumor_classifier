@@ -248,12 +248,21 @@ def main(argv=None) -> int:
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)
 
-    # Run-aware logging (ties logs across stages in Docker/CI)
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="resize")
-
     # Resolve config-first (YAML + overrides), with CLI fallback for backward compat
     cfg = build_resize_config(args.config, overrides=args.override)
+
+    # Run-aware logging (ties logs across stages in Docker/CI)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="resize",
+    )
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     train_in  = (cfg.train_in  if cfg.train_in  is not None else args.train_in)  or MERGED_DIR

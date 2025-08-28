@@ -24,6 +24,23 @@ import yaml
 
 from src.utils.paths import CONFIGS_DIR
 
+@dataclass
+class LoggingConfig:
+    """
+    Logging defaults applied by the orchestrator.
+
+    level : str
+        Log level (e.g., 'INFO', 'DEBUG').
+    file : Optional[str]
+        Optional fixed log file path. If None, each stage decides (your code
+        already supports auto/fixed in configure_logging()).
+    json : bool
+        Future toggle for JSON logs if JSON formatter is added.
+    """
+    level: str = "INFO"
+    file: Optional[str] = None
+    json: bool = False
+
 # ----------------------- Stage Configs ---------------------------
 
 ### Fetch Config
@@ -49,6 +66,7 @@ class FetchConfig:
     write_pointer: bool = True
     pointer_dir: Optional[Path] = None
     dry_run: bool = False  # for testing
+    log: LoggingConfig = field(default_factory=LoggingConfig)
 
 def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> FetchConfig:
     """
@@ -61,6 +79,17 @@ def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> Fetch
         yaml_cfg = load_yaml_config(yaml_path)
         _deep_update(base, yaml_cfg)
     base = apply_overrides(base, overrides)
+
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
+
     # Normalize Path-like fields
     cache_dir = Path(base["cache_dir"]) if base.get("cache_dir") else None
     pointer_dir = Path(base["pointer_dir"]) if base.get("pointer_dir") else None
@@ -70,6 +99,7 @@ def build_fetch_config(yaml_path: Optional[Path], overrides: List[str]) -> Fetch
         write_pointer=bool(base.get("write_pointer", True)),
         pointer_dir=pointer_dir,
         dry_run=bool(base.get("dry_run", False)),
+        log=LoggingConfig(**log_block),
     )
 
 
@@ -94,6 +124,7 @@ class MergeConfig:
     exts: Optional[object] = None
     clear_dest: bool = False
     dry_run: bool = False  # for testing
+    log: LoggingConfig = field(default_factory=LoggingConfig)
 
 def build_merge_config(yaml_path: Optional[Path], overrides: List[str]) -> MergeConfig:
     """
@@ -113,6 +144,16 @@ def build_merge_config(yaml_path: Optional[Path], overrides: List[str]) -> Merge
         _deep_update(base, yaml_cfg)
     base = apply_overrides(base, overrides)
 
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
+
     pointer = Path(base["pointer"]) if base.get("pointer") else None
     return MergeConfig(
         dataset=base.get("dataset"),
@@ -120,6 +161,7 @@ def build_merge_config(yaml_path: Optional[Path], overrides: List[str]) -> Merge
         exts=base.get("exts"),
         clear_dest=bool(base.get("clear_dest", False)),
         dry_run=bool(base.get("dry_run", False)),
+        log=LoggingConfig(**log_block),
     )
 
 ### Validate Config
@@ -166,6 +208,7 @@ class ValidateConfig:
     report_tag: Optional[str] = None  # "pre" | "post" | None
     # How to detect duplicates: "file" (bytes), "content" (RGB+resize), or "both"
     dup_mode: str = "file"
+    log: LoggingConfig = field(default_factory=LoggingConfig)
 
 def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> ValidateConfig:
     """
@@ -191,6 +234,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         "require_rgb": True,
         "report_tag": None,
         "dup_mode": "file",           # "file" | "content" | "both"
+        "log": {"level": "INFO", "file": None, "json": False},
     }
 
     if yaml_path:
@@ -199,6 +243,16 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
     base = apply_overrides(base, overrides)
 
     def _p(x): return Path(x) if x is not None else None
+
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
 
     return ValidateConfig(
         in_dir=_p(base.get("in_dir")),
@@ -219,6 +273,7 @@ def build_validate_config(yaml_path: Optional[Path], overrides: List[str]) -> Va
         require_rgb=bool(base.get("require_rgb", True)),
         report_tag=base.get("report_tag"),
         dup_mode=str(base.get("dup_mode", "file")),
+        log=LoggingConfig(**log_block), 
     )
 
 
@@ -230,8 +285,7 @@ class CleanupConfig:
     policy: str = "strict"       # strict | within_class | report_only
     why: str = "errors"          # errors | warnings | both
     dry_run: bool = False
-    log_level: str = "INFO"
-    log_file: Optional[str] = None
+    log: LoggingConfig = field(default_factory=LoggingConfig)
     report_tag: Optional[str] = None
 
 def build_cleanup_config(config_file: Path | None, overrides: list[str] | None = None) -> CleanupConfig:
@@ -247,15 +301,24 @@ def build_cleanup_config(config_file: Path | None, overrides: list[str] | None =
 
     base = apply_overrides(base, overrides or [])
 
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
+
     return CleanupConfig(
         stage=str(base.get("stage", "cleanup")),
         report=str(base.get("report", "latest")),
         policy=str(base.get("policy", "strict")),
         why=str(base.get("why", "errors")),
         dry_run=bool(base.get("dry_run", False)),
-        log_level=str(base.get("log_level", "INFO")),
-        log_file=base.get("log_file"),
         report_tag=base.get("report_tag"),
+        log=LoggingConfig(**log_block),
     )
 
 
@@ -282,6 +345,7 @@ class ResizeConfig:
     size: int = 224
     exts: Optional[object] = None  # list[str] | 'all' | None
     dry_run: bool = False  # for testing
+    log: LoggingConfig = field(default_factory=LoggingConfig)
 
 def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> ResizeConfig:
     """
@@ -309,6 +373,16 @@ def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> Resi
         parts = [e.strip() for e in exts_val.split(",") if e.strip()]
         exts_val = [p if p.startswith(".") else f".{p}" for p in parts]
 
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
+
     return ResizeConfig(
         train_in=_p(base.get("train_in")),
         train_out=_p(base.get("train_out")),
@@ -317,6 +391,7 @@ def build_resize_config(yaml_path: Optional[Path], overrides: List[str]) -> Resi
         size=int(base.get("size", 224)),
         exts=exts_val,  
         dry_run=bool(base.get("dry_run", False)),
+        log=LoggingConfig(**log_block),
     )
 
 
@@ -358,6 +433,7 @@ class SplitConfig:
     mapping_write_split_copy: bool = False
     dry_run: bool = False  # for testing
     val_frac: float = 0.10
+    log: LoggingConfig = field(default_factory=LoggingConfig)
 
 def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> SplitConfig:
     """
@@ -390,6 +466,16 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
     if isinstance(exts_val, str) and exts_val.lower() != "all":
         parts = [e.strip() for e in exts_val.split(",") if e.strip()]
         exts_val = [p if p.startswith(".") else f".{p}" for p in parts]
+    
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
 
     return SplitConfig(
         dataset=base.get("dataset"),
@@ -403,6 +489,7 @@ def build_split_config(yaml_path: Optional[Path], overrides: List[str]) -> Split
         mapping_use_dataset_subdir=bool(base.get("mapping_use_dataset_subdir", False)),
         mapping_write_split_copy=bool(base.get("mapping_write_split_copy", False)),
         dry_run=bool(base.get("dry_run", False)),
+        log=LoggingConfig(**log_block),
     )
 
 
@@ -560,6 +647,8 @@ class TrainConfig:
     callbacks: CallbacksConfig = field(default_factory=CallbacksConfig)
     run_id: Optional[str] = None
     dry_run: bool = False
+    val_in: Optional[Path] = None
+    log: LoggingConfig = field(default_factory=LoggingConfig)
 
 def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> TrainConfig:
     """
@@ -589,6 +678,19 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         io_block["out_models"] = Path(out_models)
     if isinstance(out_summary, str):
         io_block["out_summary"] = Path(out_summary)
+    
+    val_in_raw = base.get("val_in")
+    val_in = Path(val_in_raw) if isinstance(val_in_raw, str) else val_in_raw
+
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
 
     return TrainConfig(
         data=DataConfig(**base.get("data", {})),
@@ -597,9 +699,11 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         io=TrainIOConfig(**io_block),
         loop=TrainLoopConfig(**base.get("loop", {})),
         aug=AugmentConfig(**base.get("aug", {})),
+        log=LoggingConfig(**log_block),
         callbacks=callbacks,
         run_id=base.get("run_id"),
         dry_run=bool(base.get("dry_run", False)),
+        val_in=val_in,
     )
 
 
@@ -611,6 +715,8 @@ class EvalConfig:
     io: EvalIOConfig = field(default_factory=EvalIOConfig)
     run_id: Optional[str] = None
     dry_run: bool = False
+    log: LoggingConfig = field(default_factory=LoggingConfig)
+
 
 def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalConfig:
     """
@@ -644,6 +750,16 @@ def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalCo
     mptr = data_block.get("mapping_pointer")
     if isinstance(mptr, str):
         data_block["mapping_pointer"] = Path(mptr)
+    
+    #  ---- Back-compat for flat fields ----
+    if "log_level" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["level"] = base.pop("log_level") or base["log"].get("level", "INFO")
+    if "log_file" in base and "log" not in base:
+        base.setdefault("log", {})
+        base["log"]["file"] = base.pop("log_file") or base["log"].get("file")
+    
+    log_block = base.get("log", {}) or {}
 
     return EvalConfig(
         data=DataConfig(**data_block),
@@ -651,6 +767,7 @@ def build_eval_config(yaml_path: Optional[Path], overrides: List[str]) -> EvalCo
         io=EvalIOConfig(**io_block),
         run_id=base.get("run_id"),
         dry_run=bool(base.get("dry_run", False)),
+        log=LoggingConfig(**log_block),
     )
 
 
@@ -672,24 +789,6 @@ class EnvConfig:
     prefer_cuda: bool = True
     cudnn_deterministic: bool = True
     cudnn_benchmark: bool = False
-
-
-@dataclass
-class LoggingConfig:
-    """
-    Logging defaults applied by the orchestrator.
-
-    level : str
-        Log level (e.g., 'INFO', 'DEBUG').
-    file : Optional[str]
-        Optional fixed log file path. If None, each stage decides (your code
-        already supports auto/fixed in configure_logging()).
-    json : bool
-        Future toggle for JSON logs if you add a JSON formatter.
-    """
-    level: str = "INFO"
-    file: Optional[str] = None
-    json: bool = False
 
 
 @dataclass

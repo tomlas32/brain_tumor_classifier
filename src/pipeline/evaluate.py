@@ -117,22 +117,27 @@ def main(argv=None):
     parser = make_parser_evaluate()
     args = parser.parse_args(argv)
 
+    cfg = build_eval_config(args.config, overrides=args.override)
+
     # 2) Configure logging with run_id + stage='evaluate'
     run_id = _os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="evaluate")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="evaluate")
-    
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="evaluate",
+    )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
     log.info("evaluate.cli_start", extra={
         "cli_args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
     })
 
     bootstrap_env(seed=args.seed)
     log_env_once()
-
-    cfg = build_eval_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
     mapping_path = cfg.data.mapping_path or args.mapping_path

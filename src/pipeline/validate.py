@@ -459,7 +459,7 @@ def validate_dataset(
 
                                 if not same_class or score < ssim_thresh:
                                     # Keep the visibility log, but do not record a warning
-                                    log.info(f"[PHASH_REJECTED] {p} vs {prev_path} (d={d}, ssim={score:.3f})")
+                                    log.debug(f"[PHASH_REJECTED] {p} vs {prev_path} (d={d}, ssim={score:.3f})")
                                     continue
 
                                 # Track the best acceptable candidate (lowest Hamming, then highest SSIM)
@@ -590,14 +590,23 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
 
+    # Config-first
+    cfg = build_validate_config(args.config, overrides=args.override)
+
     # Run-aware logging (ties logs across stages)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="validate")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="validate")
+    
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
 
-    cfg = build_validate_config(args.config, overrides=args.override)
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="validate",
+    )
+
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # choose in_dir: explicit > arg > mode-based default

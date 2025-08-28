@@ -217,17 +217,27 @@ def main(argv=None) -> int:
     add_common_cleanup_args(parser)  # --eval-in, --eval-out, --trained-model
     args = parser.parse_args(argv)
 
-    # Run-aware logging
-    run_id = os.getenv("RUN_ID") or _now_run_id()
-    configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="cleanup")
 
     cfg = None
     try:
         from src.core.config import build_cleanup_config, to_dict
         cfg = build_cleanup_config(args.config, overrides=args.override)
-        log.info("config.resolved", extra={"config": to_dict(cfg)})
     except Exception:
         cfg = None  # fallback: no structured config available
+
+    # Run-aware logging
+    run_id = os.getenv("RUN_ID") or _now_run_id()
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="cleanup",
+    )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # Merge config → args (config wins when present)
     report  = getattr(cfg, "report", None)  or args.report

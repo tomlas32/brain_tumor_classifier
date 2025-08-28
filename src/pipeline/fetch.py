@@ -153,15 +153,21 @@ def main(argv=None) -> int:
     parser = make_parser_fetch_kaggle()
     args = parser.parse_args(argv)
 
-    # Run-aware logging (ties logs across stages)
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="fetch")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="fetch")
-
     # Resolve config (config-first with CLI fallback)
     cfg = build_fetch_config(args.config, overrides=args.override)
+
+    # Run-aware logging (ties logs across stages)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="fetch",
+    )
     log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     dataset = cfg.dataset or args.dataset
