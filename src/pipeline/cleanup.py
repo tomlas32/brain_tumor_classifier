@@ -212,7 +212,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Quarantine bad files based on a validate.py report (read-only consumer).")
     
-    add_common_config_args(parser)  # --config, --override, --dry-run
+    add_common_config_args(parser, include_dry_run=True)  # --config, --override, --dry-run
     add_common_logging_args(parser)  # --log-level, --log-file
     add_common_cleanup_args(parser)  # --eval-in, --eval-out, --trained-model
     args = parser.parse_args(argv)

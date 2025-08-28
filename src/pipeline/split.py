@@ -146,7 +146,7 @@ def main(argv=None) -> int:
     parser.add_argument("--clear-dest", action="store_true",
                         help="Delete existing data/{training,validation,testing} before writing.")
     add_exts_arg(parser)
-    add_common_config_args(parser)
+    add_common_config_args(parser, include_dry_run=True)
     add_common_logging_args(parser)
 
     args = parser.parse_args(argv or [])

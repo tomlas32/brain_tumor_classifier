@@ -96,7 +96,7 @@ def make_parser_train() -> argparse.ArgumentParser:
     add_model_args(parser)            # model name + pretrained flag
     add_common_logging_args(parser)   # log level/file
     # shared config flags: --config, --override, `--dry-run`
-    add_common_config_args(parser)
+    add_common_config_args(parser, include_dry_run=True)
     # Shared mapping flags: --mapping-pointer, --index-remap
     add_mapping_args(parser)
     

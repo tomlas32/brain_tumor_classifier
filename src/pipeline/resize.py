@@ -243,7 +243,7 @@ def main(argv=None) -> int:
                         help="(Optional) legacy testing output root; omitted in canonical flow.")
     parser.add_argument("--size", type=int, default=None, help="Output square size in pixels (e.g., 224).")
     
-    add_common_config_args(parser)   # --config, --override
+    add_common_config_args(parser, include_dry_run=True)   # --config, --override
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)
