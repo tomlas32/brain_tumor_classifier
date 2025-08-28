@@ -591,9 +591,8 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
     if isinstance(out_summary, str):
         io_block["out_summary"] = Path(out_summary)
     
-    val_in_path = base.get("val_in")
-    if isinstance(val_in_path, str):
-        base["val_in"] = Path(val_in_path)
+    val_in_raw = base.get("val_in")
+    val_in = Path(val_in_raw) if isinstance(val_in_raw, str) else val_in_raw
 
     return TrainConfig(
         data=DataConfig(**base.get("data", {})),
@@ -605,7 +604,7 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         callbacks=callbacks,
         run_id=base.get("run_id"),
         dry_run=bool(base.get("dry_run", False)),
-        val_in=val_in_path if val_in_path else None,
+        val_in=val_in,
     )
 
 

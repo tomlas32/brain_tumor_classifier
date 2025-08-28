@@ -132,17 +132,12 @@ def main(argv=None) -> int:
     train_in = Path(cfg.data.train_in) if cfg.data.train_in else args.train_in
     val_in = Path(cfg.val_in) if getattr(cfg, "val_in", None) else None
     val_frac_effective = 0.0 if val_in else cfg.data.val_frac
-    # Effective val_frac: disabled when an explicit val_in is provided
-    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
 
     mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
     mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
 
     # ---- Dry run (plan only) ----
     if args.dry_run or getattr(cfg, "dry_run", False):
-        train_in = Path(cfg.data.train_in) if cfg.data.train_in else Path(args.train_in) if args.train_in else None
-        val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None 
-        mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
 
         train_exists = train_in.exists() if train_in else False
         val_exists = val_in.exists() if val_in else False
@@ -226,10 +221,6 @@ def main(argv=None) -> int:
         log.error("train.mapping_missing", extra={"hint": "Provide data.mapping_pointer or data.mapping_path"})
         return 2
     
-    # Prefer pre-split validation set when provided; otherwise use val_frac
-    
-
-
     out_models  = Path(cfg.io.out_models)  if not isinstance(cfg.io.out_models, Path)  else cfg.io.out_models
     out_summary = Path(cfg.io.out_summary) if not isinstance(cfg.io.out_summary, Path) else cfg.io.out_summary
     # ---- Build runner inputs and execute training ----
