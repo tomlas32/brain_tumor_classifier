@@ -51,6 +51,7 @@ from __future__ import annotations
 from pathlib import Path
 import argparse, os
 from datetime import datetime, timezone
+from typing import Optional
 
 from src.utils.logging_utils import configure_logging, get_logger
 
@@ -126,6 +127,13 @@ def main(argv=None) -> int:
     # ---- Build config ----
     cfg = build_train_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    # Resolve training/validation inputs
+    train_in = Path(cfg.data.train_in) if cfg.data.train_in else args.train_in
+    val_in = Path(cfg.val_in) if getattr(cfg, "val_in", None) else None
+    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
+    # Effective val_frac: disabled when an explicit val_in is provided
+    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
 
     mapping_pointer = getattr(cfg.data, "mapping_pointer", None) or getattr(args, "mapping_pointer", None)
     mapping_path = cfg.data.mapping_path or getattr(args, "index_remap", None)
@@ -219,8 +227,7 @@ def main(argv=None) -> int:
         return 2
     
     # Prefer pre-split validation set when provided; otherwise use val_frac
-    val_in = Path(cfg.data.val_in) if getattr(cfg.data, "val_in", None) else None
-    val_frac_effective = 0.0 if val_in else cfg.data.val_frac
+    
 
 
     out_models  = Path(cfg.io.out_models)  if not isinstance(cfg.io.out_models, Path)  else cfg.io.out_models
@@ -228,7 +235,7 @@ def main(argv=None) -> int:
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
         image_size=cfg.data.image_size,
-        train_in=Path(cfg.data.train_in) if cfg.data.train_in else args.train_in,
+        train_in=train_in,
         val_in=val_in,  
         batch_size=cfg.data.batch_size,
         num_workers=cfg.data.num_workers,

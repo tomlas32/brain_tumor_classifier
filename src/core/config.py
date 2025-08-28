@@ -560,6 +560,7 @@ class TrainConfig:
     callbacks: CallbacksConfig = field(default_factory=CallbacksConfig)
     run_id: Optional[str] = None
     dry_run: bool = False
+    val_in: Optional[Path] = None
 
 def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> TrainConfig:
     """
@@ -589,6 +590,10 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         io_block["out_models"] = Path(out_models)
     if isinstance(out_summary, str):
         io_block["out_summary"] = Path(out_summary)
+    
+    val_in_path = base.get("val_in")
+    if isinstance(val_in_path, str):
+        base["val_in"] = Path(val_in_path)
 
     return TrainConfig(
         data=DataConfig(**base.get("data", {})),
@@ -600,6 +605,7 @@ def build_train_config(yaml_path: Optional[Path], overrides: List[str]) -> Train
         callbacks=callbacks,
         run_id=base.get("run_id"),
         dry_run=bool(base.get("dry_run", False)),
+        val_in=val_in_path if val_in_path else None,
     )
 
 
