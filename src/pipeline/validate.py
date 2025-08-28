@@ -584,7 +584,7 @@ def main(argv=None) -> int:
     # shared dataset flags: --in-dir, --size, --exts
     add_dataset_args(parser, with_size=True, with_exts=True)
     # shared config flags: --config, --override, `--dry-run`
-    add_common_config_args(parser)
+    add_common_config_args(parser, include_dry_run=True)
     # shared logging flags: --log-level, --log-file
     add_common_logging_args(parser)
 
