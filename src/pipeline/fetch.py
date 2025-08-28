@@ -155,7 +155,6 @@ def main(argv=None) -> int:
 
     # Resolve config (config-first with CLI fallback)
     cfg = build_fetch_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # Run-aware logging (ties logs across stages)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
@@ -169,6 +168,7 @@ def main(argv=None) -> int:
         run_id=run_id,
         stage="fetch",
     )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     dataset = cfg.dataset or args.dataset
     cache_dir = Path(cfg.cache_dir or args.cache_dir or DATA_DIR)

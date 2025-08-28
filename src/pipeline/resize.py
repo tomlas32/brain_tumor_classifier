@@ -250,7 +250,6 @@ def main(argv=None) -> int:
 
     # Resolve config-first (YAML + overrides), with CLI fallback for backward compat
     cfg = build_resize_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # Run-aware logging (ties logs across stages in Docker/CI)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
@@ -264,6 +263,7 @@ def main(argv=None) -> int:
         run_id=run_id,
         stage="resize",
     )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     train_in  = (cfg.train_in  if cfg.train_in  is not None else args.train_in)  or MERGED_DIR
     train_out = (cfg.train_out if cfg.train_out is not None else args.train_out) or PROCESSED_DIR

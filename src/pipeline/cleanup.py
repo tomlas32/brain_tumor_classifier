@@ -222,7 +222,6 @@ def main(argv=None) -> int:
     try:
         from src.core.config import build_cleanup_config, to_dict
         cfg = build_cleanup_config(args.config, overrides=args.override)
-        log.info("config.resolved", extra={"config": to_dict(cfg)})
     except Exception:
         cfg = None  # fallback: no structured config available
 
@@ -238,6 +237,7 @@ def main(argv=None) -> int:
         run_id=run_id,
         stage="cleanup",
     )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # Merge config → args (config wins when present)
     report  = getattr(cfg, "report", None)  or args.report

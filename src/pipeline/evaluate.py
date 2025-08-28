@@ -118,7 +118,6 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     cfg = build_eval_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # 2) Configure logging with run_id + stage='evaluate'
     run_id = _os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
@@ -132,6 +131,7 @@ def main(argv=None):
         run_id=run_id,
         stage="evaluate",
     )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
     log.info("evaluate.cli_start", extra={
         "cli_args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
     })

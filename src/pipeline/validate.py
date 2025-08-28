@@ -592,7 +592,6 @@ def main(argv=None) -> int:
 
     # Config-first
     cfg = build_validate_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # Run-aware logging (ties logs across stages)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
@@ -605,8 +604,10 @@ def main(argv=None) -> int:
         file_mode="fixed" if log_file else "auto",
         log_file=log_file,
         run_id=run_id,
-        stage="merge",
+        stage="validate",
     )
+
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # choose in_dir: explicit > arg > mode-based default
     if cfg.in_dir is not None:

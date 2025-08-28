@@ -120,7 +120,6 @@ def main(argv=None) -> int:
 
     # Resolve config (config-first with CLI fallback)
     cfg = build_merge_config(args.config, overrides=args.override)
-    log.info("config.resolved", extra={"config": to_dict(cfg)})
 
     # Structured logging
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
@@ -134,6 +133,8 @@ def main(argv=None) -> int:
         run_id=run_id,
         stage="merge",
     )
+    log.info("config.resolved", extra={"config": to_dict(cfg)})
+    
     t0 = time.time()
 
     dataset_slug = os.getenv("DATASET_SLUG", cfg.dataset or args.dataset)

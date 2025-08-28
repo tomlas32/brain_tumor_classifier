@@ -152,6 +152,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv or [])
     # Resolve config
     cfg = build_split_config(args.config, args.override or [])
+
     # Logging
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     log_level = cfg.log_level or args.log_level or "INFO"
