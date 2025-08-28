@@ -1,6 +1,6 @@
 # Master pipeline configuration for brain tumor classification
 
-run_id: bt-exp-002
+run_id: bt-exp-006
 
 env:
   seed: 42
@@ -81,12 +81,12 @@ split:
 train:
   data:
     mapping_path: outputs/mappings/latest.json   
-  train_in: data/training
-  val_in: data/validation      # <<< add this
-  val_frac: 0.0                # <<< disable internal split
-  image_size: 224
-  batch_size: 32
-  num_workers: 4
+    train_in: data/training
+    val_frac: 0.0                # <<< disable internal split
+    image_size: 224
+    batch_size: 32
+    num_workers: 4
+    val_in: data/validation      # <<< add this
   aug:
     rotate_deg: 15
     hflip_prob: 0.5

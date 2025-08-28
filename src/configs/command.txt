@@ -44,7 +44,7 @@ python -m src.cli pipeline --config src/configs/pipeline.yaml
 python -m src.cli pipeline --config src/configs/pipeline.yaml -o fetch.dry_run=true
 
 SKIP EARLY STAGE 
-python -m src.cli pipeline --config src/configs/pipeline.yaml --skip fetch --skip split
+python -m src.cli pipeline --config src/configs/pipeline.yaml --skip fetch --skip merge
 
 
 RESUME RESIZE

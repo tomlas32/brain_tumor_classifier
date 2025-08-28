@@ -189,11 +189,6 @@ def add_common_cleanup_args(parser: argparse.ArgumentParser) -> argparse.Argumen
         help="Which severities to act on.",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Plan only; do not move files.",
-    )
-    parser.add_argument(
         "--report-tag",
         choices=["pre", "post"],
         default=None,
