@@ -114,19 +114,24 @@ def main(argv=None) -> int:
     parser = make_parser_train()
     args = parser.parse_args(argv)
 
-    # Run-aware logging (ties logs across stages)
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="train")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="train")
-
-    bootstrap_env(seed=args.seed)
-    log_env_once()
-
     # ---- Build config ----
     cfg = build_train_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+    
+    # Run-aware logging (ties logs across stages)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_level = cfg.log_level or args.log_level or "INFO"
+    log_file  = cfg.log_file or args.log_file or None
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="train",
+    )
+    bootstrap_env(seed=args.seed)
+    log_env_once()
 
     # Resolve training/validation inputs
     train_in = Path(cfg.data.train_in) if cfg.data.train_in else args.train_in

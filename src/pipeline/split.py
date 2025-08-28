@@ -150,36 +150,28 @@ def main(argv=None) -> int:
     add_common_logging_args(parser)
 
     args = parser.parse_args(argv or [])
-
-    # Logging
-    log_level = getattr(args, "log_level", "INFO")
-    log_file = getattr(args, "log_file", None)
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if log_file:
-        configure_logging(
-            log_level=log_level,
-            file_mode="fixed",
-            log_file=log_file,
-            run_id=run_id,
-            stage="split",
-        )
-    else:
-        configure_logging(
-            log_level=log_level,
-            file_mode="auto",
-            run_id=run_id,
-            stage="split",
-        )
-    log.info("split.dispatch", extra={"argv": argv})
-
     # Resolve config
     cfg = build_split_config(args.config, args.override or [])
+    # Logging
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_level = cfg.log_level or args.log_level or "INFO"
+    log_file  = cfg.log_file or args.log_file or None
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="split",
+    )
+
+    log.info("split.dispatch", extra={"argv": argv})
+
     dataset_slug = cfg.dataset or args.dataset
     test_frac = cfg.test_frac if getattr(cfg, "test_frac", None) is not None else args.test_frac
     val_frac = cfg.val_frac if getattr(cfg, "val_frac", None) is not None else args.val_frac
     seed = cfg.seed if getattr(cfg, "seed", None) is not None else args.seed
     clear_dest = bool(getattr(cfg, "clear_dest", False) or getattr(args, "clear_dest", False))
-
     exts = parse_exts(args.exts)  # set[str] or empty set for "all"
 
     # Guard: fractions must be provided by YAML or CLI

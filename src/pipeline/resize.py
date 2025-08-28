@@ -248,27 +248,22 @@ def main(argv=None) -> int:
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)
 
-    # Run-aware logging (ties logs across stages in Docker/CI)
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(
-            log_level=args.log_level,
-            file_mode="fixed",
-            log_file=args.log_file,
-            run_id=run_id,
-            stage="resize",
-        )
-    else:
-        configure_logging(
-            log_level=args.log_level,
-            file_mode="auto",
-            run_id=run_id,
-            stage="resize",
-        )
-
     # Resolve config-first (YAML + overrides), with CLI fallback for backward compat
     cfg = build_resize_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    # Run-aware logging (ties logs across stages in Docker/CI)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_level = cfg.log_level or args.log_level or "INFO"
+    log_file  = cfg.log_file or args.log_file or None
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="resize",
+    )
 
     train_in  = (cfg.train_in  if cfg.train_in  is not None else args.train_in)  or MERGED_DIR
     train_out = (cfg.train_out if cfg.train_out is not None else args.train_out) or PROCESSED_DIR

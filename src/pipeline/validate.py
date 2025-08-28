@@ -590,15 +590,23 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
 
-    # Run-aware logging (ties logs across stages)
-    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    if args.log_file:
-        configure_logging(log_level=args.log_level, file_mode="fixed", log_file=args.log_file, run_id=run_id, stage="validate")
-    else:
-        configure_logging(log_level=args.log_level, file_mode="auto", run_id=run_id, stage="validate")
-
+    # Config-first
     cfg = build_validate_config(args.config, overrides=args.override)
     log.info("config.resolved", extra={"config": to_dict(cfg)})
+
+    # Run-aware logging (ties logs across stages)
+    run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    
+    log_level = cfg.log_level or args.log_level or "INFO"
+    log_file  = cfg.log_file or args.log_file or None
+
+    configure_logging(
+        log_level=log_level,
+        file_mode="fixed" if log_file else "auto",
+        log_file=log_file,
+        run_id=run_id,
+        stage="merge",
+    )
 
     # choose in_dir: explicit > arg > mode-based default
     if cfg.in_dir is not None:
