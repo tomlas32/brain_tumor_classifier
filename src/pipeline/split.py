@@ -155,8 +155,8 @@ def main(argv=None) -> int:
 
     # Logging
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    log_level = cfg.log_level or args.log_level or "INFO"
-    log_file  = cfg.log_file or args.log_file or None
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
 
     configure_logging(
         log_level=log_level,

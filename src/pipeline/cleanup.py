@@ -227,8 +227,8 @@ def main(argv=None) -> int:
 
     # Run-aware logging
     run_id = os.getenv("RUN_ID") or _now_run_id()
-    log_level = cfg.log_level or args.log_level or "INFO"
-    log_file  = cfg.log_file or args.log_file or None
+    log_level = (getattr(cfg.log, "level", None) or args.log_level or "INFO")
+    log_file  = (getattr(cfg.log, "file",  None) or args.log_file  or None)
 
     configure_logging(
         log_level=log_level,
