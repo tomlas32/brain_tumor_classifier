@@ -148,8 +148,9 @@ def configure_logging(
     # Decide file path (if any)
     file_path: Path | None = None
     if file_mode == "auto":
-        script_name = Path(sys.argv[0]).stem or "app"
-        file_path = logs_root / f"{script_name}.log"
+        base = (stage or Path(sys.argv[0]).stem or "app")
+        suffix = f"_{run_id}" if run_id else ""
+        file_path = logs_root / f"{base}{suffix}.log"
     elif file_mode == "fixed":
         file_path = logs_root / (Path(log_file).name if log_file else "app.log")
     elif file_mode == "none":

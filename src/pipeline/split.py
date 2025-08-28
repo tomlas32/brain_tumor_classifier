@@ -155,7 +155,21 @@ def main(argv=None) -> int:
     log_level = getattr(args, "log_level", "INFO")
     log_file = getattr(args, "log_file", None)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    configure_logging(log_level=log_level, log_file=log_file, run_id=run_id, stage="split")
+    if log_file:
+        configure_logging(
+            log_level=log_level,
+            file_mode="fixed",
+            log_file=log_file,
+            run_id=run_id,
+            stage="split",
+        )
+    else:
+        configure_logging(
+            log_level=log_level,
+            file_mode="auto",
+            run_id=run_id,
+            stage="split",
+        )
     log.info("split.dispatch", extra={"argv": argv})
 
     # Resolve config

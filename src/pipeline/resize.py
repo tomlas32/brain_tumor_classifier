@@ -250,7 +250,21 @@ def main(argv=None) -> int:
 
     # Run-aware logging (ties logs across stages in Docker/CI)
     run_id = os.getenv("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="resize")
+    if args.log_file:
+        configure_logging(
+            log_level=args.log_level,
+            file_mode="fixed",
+            log_file=args.log_file,
+            run_id=run_id,
+            stage="resize",
+        )
+    else:
+        configure_logging(
+            log_level=args.log_level,
+            file_mode="auto",
+            run_id=run_id,
+            stage="resize",
+        )
 
     # Resolve config-first (YAML + overrides), with CLI fallback for backward compat
     cfg = build_resize_config(args.config, overrides=args.override)

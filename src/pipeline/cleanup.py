@@ -219,8 +219,14 @@ def main(argv=None) -> int:
 
     # Run-aware logging
     run_id = os.getenv("RUN_ID") or _now_run_id()
-    configure_logging(log_level=args.log_level, log_file=args.log_file, run_id=run_id, stage="cleanup")
 
+    if args.log_file:
+        configure_logging(log_level=args.log_level, file_mode="fixed",
+                          log_file=args.log_file, run_id=run_id, stage="cleanup")
+    else:
+        configure_logging(log_level=args.log_level, file_mode="auto",
+                          run_id=run_id, stage="cleanup")
+        
     cfg = None
     try:
         from src.core.config import build_cleanup_config, to_dict
