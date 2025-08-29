@@ -293,7 +293,7 @@ def _pointer_root(kind: str, dataset: Optional[str]) -> Path:
 
 def _write_latest_and_history(kind: str, payload: Dict[str, Any], base_dir: Path) -> Dict[str, Path]:
     """
-    Write latest.json and a timestamped copy under history/.
+    Write mapping pointer latest.json and a timestamped copy under history/.
 
     Returns
     -------

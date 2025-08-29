@@ -145,6 +145,9 @@ def configure_logging(
     """
     logs_root = (OUTPUTS_DIR / log_subdir).resolve()
 
+    if run_id:
+        logs_root = logs_root / run_id
+
     # Decide file path (if any)
     file_path: Path | None = None
     if file_mode == "auto":
