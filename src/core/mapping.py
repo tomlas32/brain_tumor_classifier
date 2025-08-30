@@ -99,6 +99,7 @@ def write_index_remap(
     *,
     dataset: Optional[str] = None,
     use_dataset_subdir: bool = False,
+    run_id: Optional[str] = None,
 ) -> Path:
     """
     Create and save a deterministic index_remap.json from an ordered class list.
@@ -116,10 +117,11 @@ def write_index_remap(
 
     index_remap = {str(i): cls for i, cls in enumerate(classes)}
     base = _mapping_base_dir(dataset, use_dataset_subdir)
+    rid = run_id or "no-runid"
 
     latest_path = base / "latest.json"
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    history_path = base / f"{ts}__{len(classes)}cls.json"
+    history_path = base / f"{rid}_{ts}__{len(classes)}cls.json"
 
     payload = json.dumps(index_remap, indent=2)
 

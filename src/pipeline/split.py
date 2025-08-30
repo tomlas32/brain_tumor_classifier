@@ -109,10 +109,12 @@ def _write_index_and_pointer(
     Write index_remap.json + pointer.
     """
     split_root = DATA_DIR
+    rid = run_id or "no-runid"
     latest_path = mapping_write_index_remap(
         classes,
         dataset=dataset_slug if mapping_use_dataset_subdir else None,
         use_dataset_subdir=bool(mapping_use_dataset_subdir),
+        run_id=rid,
     )
     if mapping_write_split_copy:
         copy_index_remap(latest_path, split_root)
