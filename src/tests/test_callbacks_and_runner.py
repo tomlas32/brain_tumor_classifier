@@ -193,7 +193,7 @@ def test_lr_logger_json_and_log(tmp_path, caplog, monkeypatch_data, monkeypatch_
     _, best_epoch, _ = run_training(inputs)
 
     # Filesystem effects
-    lr_hist_files = list((inputs.out_summary).glob("lr_history_*.json"))
+    lr_hist_files = list((inputs.out_summary).rglob("lr_history_*.json"))
     assert lr_hist_files, "LR history JSON not found"
     payload = json.loads(lr_hist_files[0].read_text(encoding="utf-8"))
     hist = payload["history"]
