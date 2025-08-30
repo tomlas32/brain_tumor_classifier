@@ -291,13 +291,6 @@ def main(argv=None) -> int:
         if "path" in f and "code" in f and "kind" in f
     ]
 
-    # Filter by severity (errors|warnings|both)
-    if why == "errors":
-        findings = [f for f in findings if f.kind == "error"]
-    elif why == "warnings":
-        findings = [f for f in findings if f.kind == "warning"]
-    # else both -> no filter
-
     # Plan moves per policy
     planned, counts_by_code = _plan_moves(findings, policy=policy, act_on=why, run_id=run_id)
 

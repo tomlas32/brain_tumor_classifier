@@ -1,6 +1,6 @@
 # Master pipeline configuration for brain tumor classification
 
-run_id: bt-exp-009
+run_id: bt-exp-010
 
 env:
   seed: 42
@@ -51,7 +51,7 @@ cleanup:
   report: "latest"           
   report_tag: "pre"          
   policy: "strict"           
-  why: "errors"              
+  why: "both"              
   dry_run: false
   log_level: "INFO"
   log_file: null
