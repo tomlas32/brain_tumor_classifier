@@ -47,15 +47,21 @@ def _now_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
 
 
-def _find_latest_report(tag: str | None = None) -> Path | None:
-    if not VALIDATION_REPORTS_DIR.exists():
-        return None
+def _find_latest_report(tag: str | None = None, run_id: str | None = None) -> Path | None:
+    # Prefer explicit run_id, else use env, else fall back to legacy flat dir
+    rid = run_id or os.getenv("RUN_ID")
+    roots = []
+    if rid:
+        roots.append(VALIDATION_REPORTS_DIR / rid)  # new, per-run
+    roots.append(VALIDATION_REPORTS_DIR)            # legacy fallback
+
     pattern = f"*_{tag}.json" if tag else "*.json"
-    candidates = sorted(
-        (p for p in VALIDATION_REPORTS_DIR.glob(pattern) if p.is_file()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    candidates = []
+    for root in roots:
+        if root.exists():
+            candidates.extend(p for p in root.glob(pattern) if p.is_file())
+
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return candidates[0] if candidates else None
 
 
@@ -246,9 +252,8 @@ def main(argv=None) -> int:
     dry_run     = bool(getattr(cfg, "dry_run", False) or getattr(args, "dry_run", False))
     report_tag = getattr(cfg, "report_tag", None) or getattr(args, "report_tag", None)
     
-    # Resolve report path
     if report == "latest":
-        report_path = _find_latest_report(report_tag)
+        report_path = _find_latest_report(report_tag)  # uses RUN_ID from env
         if not report_path:
             log.error("cleanup.no_reports_found", extra={"reports_dir": str(VALIDATION_REPORTS_DIR), "tag": report_tag})
             print("❌ No validation reports found. Run validate.py first.")
@@ -260,6 +265,8 @@ def main(argv=None) -> int:
             print(f"❌ Report not found: {report_path}")
             return 2
 
+    # NEW: provenance log (and we keep it in the manifest too)
+    log.info("cleanup.source_report", extra={"report": str(report_path)})
 
     # Load report
     try:

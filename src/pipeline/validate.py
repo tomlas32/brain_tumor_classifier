@@ -741,11 +741,17 @@ def main(argv=None) -> int:
         report_tag = getattr(cfg, "report_tag", None) or getattr(args, "report_tag", None)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
         suffix = f"_{report_tag}" if report_tag else ""
-        report_path = VALIDATION_REPORTS_DIR / f"validation_{run_id}_{ts}{suffix}.json"
+
+        run_reports_dir = VALIDATION_REPORTS_DIR / run_id
+        run_reports_dir.mkdir(parents=True, exist_ok=True)
+        report_path = run_reports_dir / f"validation_{run_id}_{ts}{suffix}.json"
         
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
-        log.info("validation_report_written", extra={"path": str(report_path)})
+        log.info("validation_report_written", extra={
+        "run_id": run_id,
+        "path": str(report_path),
+    })
 
     # Compact human summary to stdout
     print(
