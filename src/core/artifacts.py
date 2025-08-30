@@ -175,9 +175,13 @@ def write_training_summary(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # NEW: per-run directory for versioned manifests
+    run_dir = out_dir / (run_id or "no-runid")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
     ts = _utc_now()
     fname = f"training_summary_{(run_id or 'no-runid')}_{_utc_compact()}.json"
-    summary_path = out_dir / fname
+    summary_path = run_dir / fname
 
     payload = {
         "timestamp_utc": ts,

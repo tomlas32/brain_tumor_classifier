@@ -311,9 +311,21 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
 
     # ---- Callbacks (consume callbacks.* from config)
     cb_cfg = inputs.args_dict.get("callbacks", {}) if isinstance(inputs.args_dict, dict) else {}
+
+    # NEW: per-run summary directory so lr_history lands under outputs/training/<run_id>/
+    out_summary_run = inputs.out_summary / inputs.run_id
+    out_summary_run.mkdir(parents=True, exist_ok=True)
+
     es = EarlyStoppingCallback(_ESCfg(**(cb_cfg.get("early_stopping", {}) or {})))
     ckpt_cb = CheckpointCallback(_CkptCfg(**(cb_cfg.get("checkpoint", {}) or {})), out_models=run_models)
-    lr_cb = LRLoggerCallback(_LRCfg(**(cb_cfg.get("lr_logger", {}) or {})), out_summary=inputs.out_summary, run_id=inputs.run_id)
+
+    # IMPORTANT: pass out_summary_run instead of inputs.out_summary
+    lr_cb = LRLoggerCallback(
+        _LRCfg(**(cb_cfg.get("lr_logger", {}) or {})),
+        out_summary=out_summary_run,
+        run_id=inputs.run_id
+    )
+
     callbacks = [es, ckpt_cb, lr_cb]
     for cb in callbacks:
         cb.on_train_start(model=model, optimizer=optimizer, scheduler=scheduler)
