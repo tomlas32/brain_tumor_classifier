@@ -98,13 +98,25 @@ def _render_plan(combined: Dict[str, List[Path]]) -> str:
     lines.append("\n[DRY-RUN] No files will be created, moved, or modified.")
     return "\n".join(lines)
 
+
 def _write_manifest(manifest: dict) -> Path:
-    out_dir = OUTPUTS_DIR / "merge"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+
+    """
+    Write manifest into a run-specific subdirectory under OUTPUTS_DIR/merge/.
+
+    Layout:
+      outputs/merge/<run_id>/manifest_<runid>_<timestamp>.json
+      outputs/merge/<run_id>/latest.json
+    """
+
     runid = manifest.get("run_id") or "no-runid"
+    out_dir = OUTPUTS_DIR / "merge" / runid
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     latest = out_dir / "latest.json"
     stamped = out_dir / f"manifest_{runid}_{ts}.json"
+
     with stamped.open("w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     # Update latest pointer
