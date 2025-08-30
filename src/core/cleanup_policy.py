@@ -19,4 +19,4 @@ STRICT_ERROR_CODES = {
 NEVER_AUTO_MOVE = {"BAD_LABEL"}
 
 DEFAULT_POLICY = "strict"      # strict | within_class | report_only
-DEFAULT_ACT_ON = "errors"      # errors | warnings | both
+DEFAULT_ACT_ON = "both"      # errors | warnings | both
