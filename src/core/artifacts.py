@@ -175,13 +175,10 @@ def write_training_summary(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    # NEW: per-run directory for versioned manifests
-    run_dir = out_dir / (run_id or "no-runid")
-    run_dir.mkdir(parents=True, exist_ok=True)
 
     ts = _utc_now()
     fname = f"training_summary_{(run_id or 'no-runid')}_{_utc_compact()}.json"
-    summary_path = run_dir / fname
+    summary_path = out_dir / fname
 
     payload = {
         "timestamp_utc": ts,
@@ -196,7 +193,7 @@ def write_training_summary(
     }
 
     safe_json_dump(payload, summary_path)
-    write_latest_pointer(payload, out_dir, stem="training_summary")
+    write_latest_pointer(payload, out_dir.parent, stem="training_summary")
     return summary_path
 
 

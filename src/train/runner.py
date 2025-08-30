@@ -312,7 +312,7 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     # ---- Callbacks (consume callbacks.* from config)
     cb_cfg = inputs.args_dict.get("callbacks", {}) if isinstance(inputs.args_dict, dict) else {}
 
-    # NEW: per-run summary directory so lr_history lands under outputs/training/<run_id>/
+    # Per-run summary directory so lr_history & summaries land under outputs/training/<run_id>/
     out_summary_run = inputs.out_summary / inputs.run_id
     out_summary_run.mkdir(parents=True, exist_ok=True)
 
@@ -456,7 +456,7 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
 
     # Write training summary manifest (unchanged)
     write_training_summary(
-        out_dir=inputs.out_summary,
+        out_dir=out_summary_run,
         run_id=inputs.run_id,
         args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in inputs.args_dict.items()},
         class_names=expected_classes,
