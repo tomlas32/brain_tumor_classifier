@@ -95,8 +95,9 @@ def _write_manifest(manifest: dict) -> Path:
     out_dir = OUTPUTS_DIR / "merge"
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    runid = manifest.get("run_id") or "no-runid"
     latest = out_dir / "latest.json"
-    stamped = out_dir / f"manifest_{ts}.json"
+    stamped = out_dir / f"manifest_{runid}_{ts}.json"
     with stamped.open("w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     # Update latest pointer
