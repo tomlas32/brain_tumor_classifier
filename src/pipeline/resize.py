@@ -58,6 +58,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timezone
 import os
+from shutil import rmtree
 
 import cv2
 import numpy as np
@@ -247,6 +248,20 @@ def main(argv=None) -> int:
     add_common_logging_args(parser)  # --log-level, --log-file
     add_exts_arg(parser)             # --exts semantics (supports '+ext' and 'all')
     args = parser.parse_args(argv)
+
+    # Respect dry-run: only log what we'd do
+    if getattr(args, "dry_run", False):
+        if PROCESSED_DIR.exists():
+            log.info("resize.clean_target_planned", extra={"target": str(PROCESSED_DIR)})
+        else:
+            log.info("resize.clean_target_skipped", extra={"target": str(PROCESSED_DIR), "reason": "not-exist"})
+        # continue without deleting; rest of your dry-run logic returns early later
+    else:
+        # Clean target so no stale files remain from previous runs
+        if PROCESSED_DIR.exists():
+            log.info("resize.clean_target", extra={"target": str(PROCESSED_DIR)})
+            rmtree(PROCESSED_DIR)
+        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
     # Resolve config-first (YAML + overrides), with CLI fallback for backward compat
     cfg = build_resize_config(args.config, overrides=args.override)
