@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+import shutil
 
 import copy
 import math
@@ -195,6 +196,10 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     """
     log.info("train.start", extra={"run_id": inputs.run_id, "cfg_args": inputs.args_dict})
 
+    # Per-run models directory (resolver)
+    run_models = inputs.out_models / inputs.run_id
+    run_models.mkdir(parents=True, exist_ok=True)
+
     # ---- Device (honor env.prefer_cuda if present)
     env_cfg = inputs.args_dict.get("env", {}) if isinstance(inputs.args_dict, dict) else {}
     prefer_cuda = bool(env_cfg.get("prefer_cuda", True))
@@ -306,9 +311,21 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
 
     # ---- Callbacks (consume callbacks.* from config)
     cb_cfg = inputs.args_dict.get("callbacks", {}) if isinstance(inputs.args_dict, dict) else {}
+
+    # Per-run summary directory so lr_history & summaries land under outputs/training/<run_id>/
+    out_summary_run = inputs.out_summary / inputs.run_id
+    out_summary_run.mkdir(parents=True, exist_ok=True)
+
     es = EarlyStoppingCallback(_ESCfg(**(cb_cfg.get("early_stopping", {}) or {})))
-    ckpt_cb = CheckpointCallback(_CkptCfg(**(cb_cfg.get("checkpoint", {}) or {})), out_models=inputs.out_models)
-    lr_cb = LRLoggerCallback(_LRCfg(**(cb_cfg.get("lr_logger", {}) or {})), out_summary=inputs.out_summary, run_id=inputs.run_id)
+    ckpt_cb = CheckpointCallback(_CkptCfg(**(cb_cfg.get("checkpoint", {}) or {})), out_models=run_models)
+
+    # IMPORTANT: pass out_summary_run instead of inputs.out_summary
+    lr_cb = LRLoggerCallback(
+        _LRCfg(**(cb_cfg.get("lr_logger", {}) or {})),
+        out_summary=out_summary_run,
+        run_id=inputs.run_id
+    )
+
     callbacks = [es, ckpt_cb, lr_cb]
     for cb in callbacks:
         cb.on_train_start(model=model, optimizer=optimizer, scheduler=scheduler)
@@ -374,13 +391,12 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
             break
 
     # ---- Save best (prefer checkpoint callback if it ran)
-    inputs.out_models.mkdir(parents=True, exist_ok=True)
     if ckpt_cb.best_path is not None:
         ckpt_path = ckpt_cb.best_path
     else:
-        ckpt_path = inputs.out_models / f"best_valF1_{best_f1:.4f}_epoch{best_epoch}.pth"
+        ckpt_path = run_models / f"best_valF1_{best_f1:.4f}_epoch{best_epoch}.pth"
         torch.save(best_wts, ckpt_path)
-        log.info("checkpoint.saved", extra={"path": str(ckpt_path)})
+        log.info("checkpoint.saved", extra={"path": str(ckpt_path), "kind": "best"})
 
     # Finalize best state in memory
     model.load_state_dict(best_wts)
@@ -390,6 +406,44 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
         copy_index_remap(mapping_path, ckpt_path.parent)
     except Exception as e:
         log.warning("mapping.copy_failed", extra={"error": str(e)})
+    
+
+    # ---- Stable pointers for evaluation (root models/)
+    try:
+        stable_best = inputs.out_models / "best.pth"
+        stable_best.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ckpt_path, stable_best)
+        log.info("checkpoint.pointer_updated", extra={"path": str(stable_best), "kind": "best"})
+    except Exception as e:
+        log.warning("checkpoint.pointer_update_failed", extra={"target": "models/best.pth", "error": str(e)})
+
+
+    # ---- Stable mapping copy for evaluation (root models/)
+    try:
+        # Prefer the file we just wrote next to the checkpoint; fall back to mapping_path
+        src_map = ckpt_path.parent / "index_remap.json"
+        if not src_map.exists():
+            src_map = Path(mapping_path)
+        stable_map = inputs.out_models / "index_remap.json"
+        shutil.copy2(src_map, stable_map)
+        log.info("mapping.pointer_updated", extra={"path": str(stable_map)})
+    except Exception as e:
+        log.warning("mapping.pointer_update_failed", extra={"target": "models/index_remap.json", "error": str(e)})
+    
+    
+    # ---- Back-compat copies under models/ (root) for tests/scripts
+    try:
+        # last.pth
+        last_src = run_models / "last.pth"
+        if last_src.exists():
+            (inputs.out_models).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(last_src, inputs.out_models / "last.pth")
+
+        # periodic ckpts (ckpt_epochN.pth)
+        for p in run_models.glob("ckpt_epoch*.pth"):
+            shutil.copy2(p, inputs.out_models / p.name)
+    except Exception as e:
+        log.warning("compat.copy_failed", extra={"error": str(e)})
     
     # Build a robust class_to_idx (mocks may not define .class_to_idx)
     if 'train_base_ds' in locals() and hasattr(train_base_ds, "class_to_idx"):
@@ -402,7 +456,7 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
 
     # Write training summary manifest (unchanged)
     write_training_summary(
-        out_dir=inputs.out_summary,
+        out_dir=out_summary_run,
         run_id=inputs.run_id,
         args_dict={k: (str(v) if isinstance(v, Path) else v) for k, v in inputs.args_dict.items()},
         class_names=expected_classes,

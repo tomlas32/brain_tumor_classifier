@@ -229,6 +229,12 @@ def main(argv=None) -> int:
     
     out_models  = Path(cfg.io.out_models)  if not isinstance(cfg.io.out_models, Path)  else cfg.io.out_models
     out_summary = Path(cfg.io.out_summary) if not isinstance(cfg.io.out_summary, Path) else cfg.io.out_summary
+    
+    # Derive a per-run models directory
+    run_models = out_models / (cfg.run_id or run_id)
+    run_models.mkdir(parents=True, exist_ok=True)
+    log.info("train.models.run_dir", extra={"run_models": str(run_models)})
+    
     # ---- Build runner inputs and execute training ----
     inputs = TrainRunnerInputs(
         image_size=cfg.data.image_size,

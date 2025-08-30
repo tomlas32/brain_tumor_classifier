@@ -175,6 +175,7 @@ def write_training_summary(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
     ts = _utc_now()
     fname = f"training_summary_{(run_id or 'no-runid')}_{_utc_compact()}.json"
     summary_path = out_dir / fname
@@ -192,7 +193,7 @@ def write_training_summary(
     }
 
     safe_json_dump(payload, summary_path)
-    write_latest_pointer(payload, out_dir, stem="training_summary")
+    write_latest_pointer(payload, out_dir.parent, stem="training_summary")
     return summary_path
 
 
@@ -293,7 +294,7 @@ def _pointer_root(kind: str, dataset: Optional[str]) -> Path:
 
 def _write_latest_and_history(kind: str, payload: Dict[str, Any], base_dir: Path) -> Dict[str, Path]:
     """
-    Write latest.json and a timestamped copy under history/.
+    Write mapping pointer latest.json and a timestamped copy under history/.
 
     Returns
     -------

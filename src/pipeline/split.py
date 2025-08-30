@@ -93,45 +93,6 @@ def safe_copy(src: Path, dst: Path):
     shutil.copy2(src, out)
 
 
-def _class_names_from_dir(root: Path) -> List[str]:
-    return sorted([p.name for p in root.iterdir() if p.is_dir()])
-
-
-def _write_index_and_pointer(
-    classes: List[str],
-    run_id: str,
-    dataset_slug: str,
-    save_remap_to_project_root: bool,
-    mapping_use_dataset_subdir: bool,
-    mapping_write_split_copy: bool,
-) -> Path:
-    """
-    Write index_remap.json + pointer.
-    """
-    split_root = DATA_DIR
-    latest_path = mapping_write_index_remap(
-        classes,
-        dataset=dataset_slug if mapping_use_dataset_subdir else None,
-        use_dataset_subdir=bool(mapping_use_dataset_subdir),
-    )
-    if mapping_write_split_copy:
-        copy_index_remap(latest_path, split_root)
-    if save_remap_to_project_root:
-        copy_index_remap(latest_path, Path("index_remap.json").parent)
-
-    # Standardized mapping pointer (no fetch_ptr in processed mode)
-    ordered_classes = _class_names_from_dir(DATA_DIR / "training")
-    write_mapping_pointer(
-        classes=ordered_classes,
-        index_remap_path=latest_path,
-        dataset=dataset_slug,
-        index_remap=None,
-        run_id=run_id,
-        dst_dir=None,
-    )
-    return latest_path
-
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Split data/processed into train/val/test.")
     parser.add_argument("--dataset", type=str, default=None,
@@ -285,17 +246,6 @@ def main(argv=None) -> int:
             "class": cls, "train": len(train_paths), "val": len(val_paths), "test": len(test_paths)
         })
 
-    # Mapping (index_remap + pointer)
-    
-    latest_map_path = _write_index_and_pointer(
-        classes=_class_names_from_dir(train_out),
-        run_id=run_id,
-        dataset_slug=dataset_slug,
-        save_remap_to_project_root=getattr(cfg, "save_remap_to_project_root", False),
-        mapping_use_dataset_subdir=getattr(cfg, "mapping_use_dataset_subdir", False),
-        mapping_write_split_copy=getattr(cfg, "mapping_write_split_copy", False),
-    )
-
     # Console summary
     print("\nPer-class counts:")
     for cls, ntr, nva, nte in summary:
@@ -303,7 +253,6 @@ def main(argv=None) -> int:
 
     log.info("split.done", extra={
         "dataset": dataset_slug,
-        "mapping_latest": str(latest_map_path),
         "outputs": {"training": str(train_out), "validation": str(val_out), "testing": str(test_out)},
     })
     return 0

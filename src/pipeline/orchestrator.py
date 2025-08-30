@@ -254,12 +254,13 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
 
         # Base blocks
     v_base = to_dict(master.validate) if hasattr(master.validate, "__dataclass_fields__") else dict(master.validate)
-
+    pointers = _expected_pointer_paths(master)
     # Pre-validate on merged (no mapping, no RGB/size enforcement)
     v_pre = dict(v_base)
     v_pre.update({
         "in_dir": str(MERGED_DIR),
         "index_remap": None,
+        "mapping_pointer": pointers["mapping"]["dir"],
         "enforce_size": False,
         "require_rgb": False,
         "report_tag": "pre",
@@ -272,6 +273,7 @@ def _build_plan(master: MasterConfig, *, dry_run: bool, skip: List[str], resume_
     v_post.update({
         "in_dir": str(PROCESSED_DIR),
         "index_remap": None,        # still not enforcing class set here
+        "mapping_pointer": pointers["mapping"]["dir"],
         "enforce_size": True,
         "require_rgb": True,
         "report_tag": "post",

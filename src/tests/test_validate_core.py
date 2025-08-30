@@ -19,7 +19,8 @@ def _write_png(path: Path, arr: np.ndarray) -> None:
 def _latest_reports(dir_path: Path) -> list[Path]:
     if not dir_path.exists():
         return []
-    return sorted(dir_path.glob("validation_*.json"))
+    # Recurse so reports under outputs/validation_reports/<run_id>/ are included
+    return sorted(dir_path.rglob("validation_*.json"))
 
 
 @pytest.fixture

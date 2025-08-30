@@ -24,6 +24,7 @@ from typing import Dict, List
 from src.utils.paths import DATA_DIR, OUTPUTS_DIR, MERGED_DIR
 from src.core.config import build_merge_config, to_dict
 from src.utils.paths import DEFAULT_DATASET
+from src.core.mapping import write_index_remap as mapping_write_index_remap, copy_index_remap
 from src.utils.logging_utils import configure_logging, get_logger
 from src.utils.parser_utils import (
     add_common_logging_args, 
@@ -31,13 +32,19 @@ from src.utils.parser_utils import (
     parse_exts,
     add_common_config_args,
     )
-from src.core.artifacts import read_fetch_pointer
+from src.core.artifacts import (
+    read_fetch_pointer,
+    write_mapping_pointer,
+    )
 
 log = get_logger(__name__)
 
 def _pointer_path_for(slug: str) -> Path:
     owner, name = (slug.split("/", 1) if "/" in slug else ("_unknown_", slug))
     return OUTPUTS_DIR / "pointers" / "fetch" / owner / name / "latest.json"
+
+def _class_names_from_dir(root: Path) -> List[str]:
+    return sorted([p.name for p in root.iterdir() if p.is_dir()])
 
 def _empty_dir(d: Path) -> None:
     if not d.exists():
@@ -91,18 +98,66 @@ def _render_plan(combined: Dict[str, List[Path]]) -> str:
     lines.append("\n[DRY-RUN] No files will be created, moved, or modified.")
     return "\n".join(lines)
 
+
 def _write_manifest(manifest: dict) -> Path:
-    out_dir = OUTPUTS_DIR / "merge"
+
+    """
+    Write manifest into a run-specific subdirectory under OUTPUTS_DIR/merge/.
+
+    Layout:
+      outputs/merge/<run_id>/manifest_<runid>_<timestamp>.json
+      outputs/merge/<run_id>/latest.json
+    """
+
+    runid = manifest.get("run_id") or "no-runid"
+    out_dir = OUTPUTS_DIR / "merge" / runid
     out_dir.mkdir(parents=True, exist_ok=True)
+
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     latest = out_dir / "latest.json"
-    stamped = out_dir / f"manifest_{ts}.json"
+    stamped = out_dir / f"manifest_{runid}_{ts}.json"
+
     with stamped.open("w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     # Update latest pointer
     with latest.open("w", encoding="utf-8") as f:
         json.dump({"latest": str(stamped.resolve()), "manifest": manifest}, f, ensure_ascii=False, indent=2)
     return stamped
+
+def _write_index_and_pointer(
+    classes: List[str],
+    run_id: str,
+    dataset_slug: str,
+    save_remap_to_project_root: bool,
+    mapping_use_dataset_subdir: bool,
+    mapping_write_split_copy: bool,
+) -> Path:
+    """
+    Write index_remap.json + pointer.
+    """
+    split_root = DATA_DIR
+    rid = run_id or "no-runid"
+
+    latest_path = mapping_write_index_remap(
+        classes,
+        dataset=dataset_slug if mapping_use_dataset_subdir else None,
+        use_dataset_subdir=bool(mapping_use_dataset_subdir),
+        run_id=rid,
+    )
+    if mapping_write_split_copy:
+        copy_index_remap(latest_path, split_root)
+    if save_remap_to_project_root:
+        copy_index_remap(latest_path, Path("index_remap.json").parent)
+
+    write_mapping_pointer(
+        classes=classes,
+        index_remap_path=latest_path,
+        dataset=dataset_slug,
+        index_remap=None,
+        run_id=run_id,
+        dst_dir=None,
+    )
+    return latest_path
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Merge Kaggle Training/Testing into data/merged.")
@@ -211,6 +266,18 @@ def main(argv=None) -> int:
         per_class_counts[cls] = count
         log.debug("merge.class_done", extra={"class": cls, "copied": count})
 
+
+    # Mapping (index_remap + pointer)
+    ordered_classes = _class_names_from_dir(MERGED_DIR)
+    latest_map_path = _write_index_and_pointer(
+        classes=ordered_classes,
+        run_id=run_id,
+        dataset_slug=dataset_slug,
+        save_remap_to_project_root=getattr(cfg, "save_remap_to_project_root", False),
+        mapping_use_dataset_subdir=getattr(cfg, "mapping_use_dataset_subdir", False),
+        mapping_write_split_copy=getattr(cfg, "mapping_write_split_copy", False),
+    )
+
     elapsed = time.time() - t0
     total = sum(per_class_counts.values())
     manifest = {
@@ -234,6 +301,7 @@ def main(argv=None) -> int:
         "total": total,
         "elapsed_s": round(elapsed, 2),
         "manifest": str(manifest_path),
+        "latest_map": str(latest_map_path),
     })
 
     print("Merge complete →", str(MERGED_DIR))
