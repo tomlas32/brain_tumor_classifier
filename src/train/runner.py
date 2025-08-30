@@ -395,6 +395,30 @@ def run(inputs: TrainRunnerInputs) -> tuple[float, int, Path]:
     except Exception as e:
         log.warning("mapping.copy_failed", extra={"error": str(e)})
     
+
+    # ---- Stable pointers for evaluation (root models/)
+    try:
+        stable_best = inputs.out_models / "best.pth"
+        stable_best.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ckpt_path, stable_best)
+        log.info("checkpoint.pointer_updated", extra={"path": str(stable_best), "kind": "best"})
+    except Exception as e:
+        log.warning("checkpoint.pointer_update_failed", extra={"target": "models/best.pth", "error": str(e)})
+
+
+    # ---- Stable mapping copy for evaluation (root models/)
+    try:
+        # Prefer the file we just wrote next to the checkpoint; fall back to mapping_path
+        src_map = ckpt_path.parent / "index_remap.json"
+        if not src_map.exists():
+            src_map = Path(mapping_path)
+        stable_map = inputs.out_models / "index_remap.json"
+        shutil.copy2(src_map, stable_map)
+        log.info("mapping.pointer_updated", extra={"path": str(stable_map)})
+    except Exception as e:
+        log.warning("mapping.pointer_update_failed", extra={"target": "models/index_remap.json", "error": str(e)})
+    
+    
     # ---- Back-compat copies under models/ (root) for tests/scripts
     try:
         # last.pth
