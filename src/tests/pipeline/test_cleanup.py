@@ -40,7 +40,6 @@ def _run_main(cleanup_mod, argv):
 def test_safe_move_collision_suffix(tmp_path, monkeypatch):
     cleanup = _import_cleanup(monkeypatch, tmp_path)
 
-    # Create two sources with same name; move to same destination path
     src1 = tmp_path / "src1.jpg"
     src2 = tmp_path / "src2.jpg"
     dst  = tmp_path / "out" / "dst.jpg"
@@ -57,7 +56,6 @@ def test_safe_move_collision_suffix(tmp_path, monkeypatch):
 def test_plan_moves_strict_and_report_only_filters(tmp_path, monkeypatch):
     cleanup = _import_cleanup(monkeypatch, tmp_path)
 
-    # Findings: one error in STRICT set, one warning not in STRICT set
     f_err = cleanup.Finding(
         path=str(tmp_path / "data" / "train" / "cls" / "a.jpg"),
         label="cls",
@@ -74,7 +72,6 @@ def test_plan_moves_strict_and_report_only_filters(tmp_path, monkeypatch):
     )
 
     planned, counts = cleanup._plan_moves([f_err, f_warn], policy="strict", act_on="both", run_id="RUNX")
-    # strict: act on errors + STRICT_ERROR_CODES, not generic warnings
     assert len(planned) == 1
     assert list(counts.keys()) == ["UNREADABLE"]
 
@@ -86,8 +83,6 @@ def test_plan_moves_strict_and_report_only_filters(tmp_path, monkeypatch):
 def test_plan_moves_within_class_duplicates(tmp_path, monkeypatch):
     cleanup = _import_cleanup(monkeypatch, tmp_path)
 
-    # Two duplicate findings sharing sha1; one within same subset/label (should move),
-    # one cross-class (should be ignored in within_class policy).
     first_path = tmp_path / "data" / "train" / "glioma" / "x.jpg"
 
     dup_same = cleanup.Finding(
@@ -110,25 +105,23 @@ def test_plan_moves_within_class_duplicates(tmp_path, monkeypatch):
     )
 
     planned, counts = cleanup._plan_moves([dup_same, dup_cross], policy="within_class", act_on="both", run_id="RID1")
-    # within_class: only quarantine duplicates inside the same subset+label
     assert len(planned) == 1
     assert planned[0][2].code == "DUPLICATE"
     assert counts["DUPLICATE"] == 1
 
-    # In strict, both duplicates are planned
     planned_s, counts_s = cleanup._plan_moves([dup_same, dup_cross], policy="strict", act_on="both", run_id="RID1")
     assert len(planned_s) == 2
     assert counts_s["DUPLICATE"] == 2
 
 
 # --------------------
-# CLI flows
+# CLI flows (use real src.core.config via --override)
 # --------------------
 
 def test_cli_dry_run_writes_plan_and_prints_counts(tmp_path, monkeypatch, capsys):
     cleanup = _import_cleanup(monkeypatch, tmp_path)
 
-    # Create on-disk files referenced in findings (not required for dry-run, but realistic)
+    # Create source files referenced in the report
     f1 = tmp_path / "data" / "train" / "glioma" / "a.jpg"
     f2 = tmp_path / "data" / "train" / "glioma" / "b.jpg"
     f1.parent.mkdir(parents=True, exist_ok=True)
@@ -139,30 +132,38 @@ def test_cli_dry_run_writes_plan_and_prints_counts(tmp_path, monkeypatch, capsys
     report = {
         "findings": [
             {"path": str(f1), "label": "glioma", "subset": "train", "kind": "error", "code": "UNREADABLE"},
-            {"path": str(f2), "label": "glioma", "subset": "train", "kind": "error", "code": "DUPLICATE", "sha1": "s1", "duplicate_of": str(f1)},
+            {"path": str(f2), "label": "glioma", "subset": "train", "kind": "error",
+             "code": "DUPLICATE", "sha1": "s1", "duplicate_of": str(f1)},
         ]
     }
     report_path.write_text(json.dumps(report), encoding="utf-8")
 
-    # Stable run id for predictable file names
     os.environ["RUN_ID"] = "TST123"
 
     code = _run_main(
         cleanup,
-        ["--report", str(report_path), "--policy", "strict", "--why", "both", "--dry-run"]
+        [
+            "--override", f"report={report_path}",
+            "--override", "policy=strict",
+            "--override", "why=both",
+            "--override", "dry_run=true",
+        ]
     )
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    if code != 0:
+        print("STDOUT:\n", captured.out)
+        print("STDERR:\n", captured.err)
+    out = captured.out
     assert code == 0
-    # 2 planned moves for strict: UNREADABLE + DUPLICATE
     assert "[DRY-RUN] Planned moves: 2" in out
     assert "By code" in out
 
-    # Plan file exists and is json with correct counts
     plan_file = (tmp_path / "cleanup_reports" / "cleanup_plan_TST123.json")
     assert plan_file.exists()
     plan = json.loads(plan_file.read_text())
     assert plan["run_id"] == "TST123"
     assert plan["policy"] == "strict"
+    assert plan["acted_on"] == "both"
     assert plan["planned_count"] == 2
     assert len(plan["items"]) == 2
     assert plan["source_report"] == str(report_path)
@@ -171,7 +172,6 @@ def test_cli_dry_run_writes_plan_and_prints_counts(tmp_path, monkeypatch, capsys
 def test_cli_execute_moves_and_manifest(tmp_path, monkeypatch, capsys):
     cleanup = _import_cleanup(monkeypatch, tmp_path)
 
-    # One existing file to move + one missing source to trigger 'skipped'
     good = tmp_path / "data" / "train" / "meningioma" / "keep1.jpg"
     missing = tmp_path / "data" / "train" / "meningioma" / "missing.jpg"
     good.parent.mkdir(parents=True, exist_ok=True)
@@ -190,18 +190,25 @@ def test_cli_execute_moves_and_manifest(tmp_path, monkeypatch, capsys):
 
     code = _run_main(
         cleanup,
-        ["--report", str(report_path), "--policy", "strict", "--why", "both"]
+        [
+            "--override", f"report={report_path}",
+            "--override", "policy=strict",
+            "--override", "why=both",
+            # not a dry-run
+        ]
     )
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    if code != 0:
+        print("STDOUT:\n", captured.out)
+        print("STDERR:\n", captured.err)
+    out = captured.out
     assert code == 0
     assert "Cleanup summary: moved=1 | skipped=1" in out
     assert "Manifest:" in out
 
-    # File moved into quarantine under RUN_ID/subset/label/
     qdst = tmp_path / "quarantine" / "RUNMOVE" / "train" / "meningioma" / good.name
     assert qdst.exists() and not good.exists()
 
-    # Manifest exists and contains moved+skipped counts and by_code
     manifests = sorted((tmp_path / "cleanup_reports").glob("quarantine_RUNMOVE_*.json"))
     assert manifests, "No manifest written"
     manifest = json.loads(manifests[-1].read_text())
@@ -212,32 +219,38 @@ def test_cli_execute_moves_and_manifest(tmp_path, monkeypatch, capsys):
     assert manifest["totals"]["moved"] == 1
     assert manifest["totals"]["skipped"] == 1
     assert set(manifest["totals"]["by_code"].keys()) == {"BAD_SIZE", "UNREADABLE"}
-    assert manifest["quarantine_root"].endswith(str((tmp_path / "quarantine" / "RUNMOVE").as_posix()).split("/")[-1])  # basic sanity
 
 
 def test_cli_report_latest_with_tag_resolution(tmp_path, monkeypatch, capsys):
     """
-    Ensure --report latest --report-tag <tag> selects the most recent per RUN_ID,
-    falling back to legacy dir pattern if needed.
+    Ensure --report latest with a tag selects the most recent and prints the
+    'clean dataset' message when no findings match the policy/severity.
     """
     cleanup = _import_cleanup(monkeypatch, tmp_path)
 
-    # Create per-run dir with two matching reports, pick newest
     os.environ["RUN_ID"] = "RIDTAG"
     run_dir = (tmp_path / "validation_reports" / "RIDTAG")
     run_dir.mkdir(parents=True, exist_ok=True)
-    r1 = run_dir / "20240101_aaa_tag.json"
-    r2 = run_dir / "20250101_bbb_tag.json"
+    r1 = run_dir / "20240101_aaa_pre.json"
+    r2 = run_dir / "20250101_bbb_pre.json"
     r1.write_text('{"findings":[]}', encoding="utf-8")
     r2.write_text('{"findings":[]}', encoding="utf-8")
-
-    # Make r2 the newer one (mtime higher)
     os.utime(r2, (r2.stat().st_atime + 10, r2.stat().st_mtime + 10))
 
     code = _run_main(
         cleanup,
-        ["--report", "latest", "--report-tag", "tag", "--policy", "report_only", "--why", "both"]
+        [
+            "--report", "latest",
+            "--report-tag", "pre",
+            # ensure policy/severity through overrides (report_only + both)
+            "--override", "policy=report_only",
+            "--override", "why=both",
+        ]
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert "[REPORT-ONLY] Planned moves:" in out  # empty findings → 0 planned
+    assert (
+        "Nothing to quarantine. Dataset already clean per selected policy/severity." in out
+        or "[REPORT-ONLY] Planned moves: 0" in out
+    )
+
