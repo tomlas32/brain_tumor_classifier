@@ -254,3 +254,86 @@ def test_cli_report_latest_with_tag_resolution(tmp_path, monkeypatch, capsys):
         or "[REPORT-ONLY] Planned moves: 0" in out
     )
 
+
+def test_plan_moves_crossclass_duplicate_removes_both(tmp_path, monkeypatch):
+    cleanup = _import_cleanup(monkeypatch, tmp_path)
+
+    # First-occurrence path (in glioma)
+    first_path = tmp_path / "data" / "train" / "glioma" / "x.jpg"
+    first_path.parent.mkdir(parents=True, exist_ok=True)
+    first_path.write_bytes(b"imgx")
+
+    # Cross-class duplicate finding (in meningioma), pointing to first_path
+    cross = cleanup.Finding(
+        path=str(tmp_path / "data" / "train" / "meningioma" / "y.jpg"),
+        label="meningioma",
+        subset="train",
+        kind="error",
+        code="CROSSCLASS_DUP",
+        sha1="abc123",
+        duplicate_of=str(first_path),
+    )
+    # ensure counterpart file exists too
+    yfile = tmp_path / "data" / "train" / "meningioma" / "y.jpg"
+    yfile.parent.mkdir(parents=True, exist_ok=True)
+    yfile.write_bytes(b"imgy")
+
+    planned, counts = cleanup._plan_moves([cross], policy="strict", act_on="both", run_id="RIDX")
+
+    # Should plan to move BOTH: the current path and its duplicate_of counterpart
+    assert len(planned) == 2
+    # Planned sources (unordered)
+    planned_srcs = {str(p[0]) for p in planned}
+    assert planned_srcs == {str(yfile), str(first_path)}
+    # Count both under the same code
+    assert counts["CROSSCLASS_DUP"] == 2
+
+
+def test_cli_dry_run_crossclass_near_dup_plans_both(tmp_path, monkeypatch, capsys):
+    cleanup = _import_cleanup(monkeypatch, tmp_path)
+
+    # Files referenced by the report
+    a = tmp_path / "data" / "train" / "glioma" / "a.jpg"
+    b = tmp_path / "data" / "train" / "meningioma" / "b.jpg"
+    a.parent.mkdir(parents=True, exist_ok=True)
+    b.parent.mkdir(parents=True, exist_ok=True)
+    a.write_bytes(b"A")
+    b.write_bytes(b"B")
+
+    # Pre-validation report with a single CROSSCLASS_NEAR_DUP finding
+    report_path = tmp_path / "vr_cross.json"
+    report = {
+        "findings": [
+            {
+                "path": str(b),
+                "label": "meningioma",
+                "subset": "train",
+                "kind": "error",
+                "code": "CROSSCLASS_NEAR_DUP",
+                "duplicate_of": str(a),
+                "details": {"hamming": 4, "ssim": 0.95, "cur_label": "meningioma", "other_label": "glioma"},
+            }
+        ]
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    os.environ["RUN_ID"] = "RIDNEAR"
+
+    code = _run_main(
+        cleanup,
+        [
+            "--override", f"report={report_path}",
+            "--override", "policy=strict",
+            "--override", "why=both",
+            "--override", "dry_run=true",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    # Plan file should list two items (both sides)
+    plan_file = (tmp_path / "cleanup_reports" / "cleanup_plan_RIDNEAR.json")
+    assert plan_file.exists()
+    plan = json.loads(plan_file.read_text())
+    assert plan["planned_count"] == 2
+    srcs = {item["src"] for item in plan["items"]}
+    assert srcs == {str(a), str(b)}

@@ -94,6 +94,110 @@ def tiny_ds(tmp_path: Path):
 
 
 # ---------- tests ----------
+def test_crossclass_exact_duplicate_flags_error(tiny_ds: Path):
+    """
+    Exact byte-for-byte duplicate across labels must emit CROSSCLASS_DUP (error)
+    and increment errors_by_type accordingly.
+    """
+    # Make an exact copy of glioma/a.png into meningioma/
+    src = tiny_ds / "glioma" / "a.png"
+    dst = tiny_ds / "meningioma" / "a_copy_from_glioma.png"
+    dst.write_bytes(src.read_bytes())
+
+    summary = validate_dataset(
+        in_dir=tiny_ds,
+        index_remap_path=None,
+        size=224,
+        exts=".png,.jpg,.jpeg",
+        dup_check=True,
+        warn_low_std=0.0,
+        min_file_bytes=1,
+        enforce_size=True,
+        require_rgb=True,
+        phash=False,   # not needed for exact dup
+    )
+
+    # New code present and counted as error
+    assert summary["errors_by_type"].get("CROSSCLASS_DUP", 0) >= 1
+
+    # Finding includes duplicate_of and both labels in details
+    recs = _findings(summary, code="CROSSCLASS_DUP", path_endswith="meningioma/a_copy_from_glioma.png")
+    assert len(recs) == 1
+    r = recs[0]
+    assert r.get("duplicate_of")
+    assert r["details"]["cur_label"] == "meningioma"
+    assert r["details"]["first_label"] == "glioma"
+
+
+def test_crossclass_near_duplicate_phash_flags_error(tiny_ds: Path):
+    """
+    Near-duplicate across labels (pHash within threshold + SSIM >= thresh)
+    must emit CROSSCLASS_NEAR_DUP (error).
+    """
+    # Move the JPEG near-dup to the other class to force cross-class detection
+    src = tiny_ds / "glioma" / "a_jpeg.jpg"
+    dst = tiny_ds / "meningioma" / "a_jpeg_cross.jpg"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.exists():
+        dst.write_bytes(src.read_bytes())
+        src.unlink()
+
+    summary = validate_dataset(
+        in_dir=tiny_ds,
+        index_remap_path=None,
+        size=224,
+        exts=".png,.jpg,.jpeg",
+        dup_check=True,
+        warn_low_std=0.0,
+        min_file_bytes=1,
+        enforce_size=True,
+        require_rgb=True,
+        phash=True,           # enable perceptual hash
+        phash_thresh=8,
+        ssim_thresh=0.90,     # uses current default; adjust if you changed it
+    )
+
+    # Should be counted as error (not warning)
+    assert summary["errors_by_type"].get("CROSSCLASS_NEAR_DUP", 0) >= 1
+    assert summary["warnings_by_type"].get("NEAR_DUP_PHASH", 0) >= 0  # may still exist for same-class cases
+
+    recs = _findings(summary, code="CROSSCLASS_NEAR_DUP", path_endswith="meningioma/a_jpeg_cross.jpg")
+    assert len(recs) == 1
+    r = recs[0]
+    assert r.get("duplicate_of")
+    assert "hamming" in r["details"]
+    assert "ssim" in r["details"]
+    assert 0.0 <= r["details"]["ssim"] <= 1.0
+    assert r["details"]["cur_label"] == "meningioma"
+    assert r["details"]["other_label"] == "glioma"
+
+
+def test_sameclass_near_duplicate_stays_warning(tiny_ds: Path):
+    """
+    Same-class near-duplicates must remain NEAR_DUP_PHASH (warning) and not be
+    promoted to error codes.
+    """
+    summary = validate_dataset(
+        in_dir=tiny_ds,
+        index_remap_path=None,
+        size=224,
+        exts=".png,.jpg,.jpeg",
+        dup_check=True,
+        warn_low_std=0.0,
+        min_file_bytes=1,
+        enforce_size=True,
+        require_rgb=True,
+        phash=True,
+        phash_thresh=8,
+        ssim_thresh=0.90,
+    )
+    # Expect at least one same-class near-dup warning (from glioma/a_jpeg.jpg vs a.png)
+    assert summary["warnings_by_type"].get("NEAR_DUP_PHASH", 0) >= 1
+    # No cross-class errors should appear in this test (dataset as-is is single-class for near-dup)
+    assert summary["errors_by_type"].get("CROSSCLASS_NEAR_DUP", 0) == 0
+
+    
+
 def test_validate_exact_duplicate_filehash(tiny_ds: Path):
     """Flags exact byte-for-byte duplicates via file SHA-1."""
     summary = validate_dataset(
