@@ -1,6 +1,6 @@
 # Master pipeline configuration for brain tumor classification
 
-run_id: bt-exp-011
+run_id: bt-exp-012
 
 env:
   seed: 42
