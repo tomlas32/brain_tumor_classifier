@@ -335,5 +335,5 @@ def test_cli_dry_run_crossclass_near_dup_plans_both(tmp_path, monkeypatch, capsy
     assert plan_file.exists()
     plan = json.loads(plan_file.read_text())
     assert plan["planned_count"] == 2
-    srcs = {item["src"] for item in plan["items"]}
+    srcs = {item["from"] for item in plan["items"]}
     assert srcs == {str(a), str(b)}
