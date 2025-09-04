@@ -1,14 +1,11 @@
-# configs/train.yaml
-run_id: brain-tumor-exp01
 data:
+  mapping_path: outputs/mappings/latest.json   
   train_in: data/training
-  val_in: data/validation      # <<< add this
   val_frac: 0.0                # <<< disable internal split
   image_size: 224
   batch_size: 32
   num_workers: 4
-  mapping_pointer: outputs/pointers/mapping/<owner>/<slug>/latest.json
-
+val_in: data/validation      
 aug:
   rotate_deg: 15
   hflip_prob: 0.5
@@ -39,11 +36,6 @@ env:
   cudnn_deterministic: true
   cudnn_benchmark: false
 
-log:
-  level: INFO
-  file: null
-  json: false
-
 callbacks:
   early_stopping:
     enabled: true
@@ -57,4 +49,6 @@ callbacks:
     # out_dir: models/checkpoints
   lr_logger:
     enabled: true
+run_id: null
+dry_run: false
 

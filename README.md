@@ -74,6 +74,17 @@ models/               # checkpoints (best/last, per naming template)
 .github/workflows/
   ci.yml              # GitHub Actions workflow (pytest, artifacts)
 tests/
+  pipeline/
+    test_cleanup.py
+    test_orchestrator.py
+    test_evaluate.py
+    test_split.py
+    test_fetch.py
+    test_merge.py
+    test_resize.py
+    test_train.py
+    test_validate_core.py
+    test_validate_duplicates.py
   test_pipeline_smoke.py
   test_callback_and_runner.py
   test_viz.py

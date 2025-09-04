@@ -2,3 +2,4 @@ dataset: sartajbhuvaji/brain-tumor-classification-mri
 cache_dir: data
 write_pointer: true
 pointer_dir: outputs/pointers/fetch/sartajbhuvaji/brain-tumor-classification-mri
+dry_run: false

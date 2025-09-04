@@ -1,4 +1,6 @@
-pointer: "outputs/pointers/fetch/the_adeel/brain-tumor-dataset/latest.json"
-exts: ".png,.jpg,.jpeg,.bmp,.tif,.tiff"  # or "all" / "+webp" etc.
+# Prefer to mirror fetch.dataset so merge can auto-locate the fetch pointer.
+dataset: sartajbhuvaji/brain-tumor-classification-mri
+pointer: outputs/pointers/fetch/the_adeel/brain-tumor-dataset/latest.json"
+exts: null                          # null → script defaults; use 'all' or list like ['.jpg','.png'] to force
 clear_dest: true
 dry_run: false
