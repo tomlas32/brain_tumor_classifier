@@ -328,7 +328,6 @@ def test_cli_dry_run_crossclass_near_dup_plans_both(tmp_path, monkeypatch, capsy
             "--override", "dry_run=true",
         ]
     )
-    out = capsys.readouterr().out
     assert code == 0
     # Plan file should list two items (both sides)
     plan_file = (tmp_path / "cleanup_reports" / "cleanup_plan_RIDNEAR.json")
