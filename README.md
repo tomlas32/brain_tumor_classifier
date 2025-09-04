@@ -263,6 +263,33 @@ Continuous Integration: GitHub Actions workflow runs tests across Python 3.10 an
 
 ---
 
+## 🎛️ Streamlit Inference App
+
+This project also provides an **interactive Streamlit app** (`app.py`) for running inference with your trained models.
+
+### Features
+- Upload your trained **model weights** (`.pth`/`.pt`).
+- Upload the corresponding **class mapping** (`index_remap.json`).
+- Upload one or more MRI images (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.webp`).
+- Get real-time predictions with **per-class probabilities** and top-1 prediction highlighted.
+- Supports ResNet18/34/50 (consistent with training pipeline).
+
+### Run the app
+```bash
+streamlit run app.py
+```
+
+Then open the provided local URL in your browser.
+
+### Example workflow
+1. Train a model with the pipeline (see instructions above).
+2. Locate your saved model weights in the `models/` directory (e.g., `models/best.pth`).
+3. Locate the `index_remap.json` mapping pointer (under `outputs/pointers/mapping/.../`).
+4. Launch the app and upload the files via the sidebar.
+5. Upload MRI images to classify and view predictions interactively.
+
+---
+
 ## 📝 License
 
 MIT License © 2025 — Contributions welcome.
