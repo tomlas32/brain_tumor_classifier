@@ -22,6 +22,10 @@ The design emphasizes **reproducibility**, **artifact consistency**, and **exten
 ## 📂 Project Structure
 
 ```
+.github/workflows/
+  ci.yml              # GitHub Actions workflow (pytest, artifacts)
+app/                  # Streamlit app
+notebooks/            # Jupyter notebooks (initial EDA)
 src/
   core/
     config.py         # typed dataclasses for all configs
@@ -71,8 +75,6 @@ configs/
   pipeline_minimal.yaml
 outputs/
 models/               # checkpoints (best/last, per naming template)
-.github/workflows/
-  ci.yml              # GitHub Actions workflow (pytest, artifacts)
 tests/
   pipeline/
     test_cleanup.py
