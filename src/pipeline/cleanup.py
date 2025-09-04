@@ -151,6 +151,7 @@ def _plan_moves(
     """
     planned: List[Tuple[Path, Path, Finding]] = []
     counts_by_code: Dict[str, int] = defaultdict(int)
+    planned_srcs: set[str] = set()
 
     # Build quick path->(subset,label) index
     idx = _path_index_from_findings(findings)
@@ -171,6 +172,31 @@ def _plan_moves(
 
         # Decide if this finding should be acted on
         if not _should_act_on(f.kind, f.code, policy, act_on):
+            continue
+
+        # NEW: Cross-class duplicates -> remove ALL copies (both sides)
+        if f.code in {"CROSSCLASS_DUP", "CROSSCLASS_NEAR_DUP"}:
+            # Queue current file
+            if str(src) not in planned_srcs:
+                planned.append((src, dst, f))
+                planned_srcs.add(str(src))
+                counts_by_code[f.code] += 1
+
+            # Queue the counterpart (duplicate_of), if known
+            if f.duplicate_of:
+                other_path = Path(f.duplicate_of)
+                # Figure out subset/label for the counterpart from findings index; fallback to path
+                other_subset, other_label = idx.get(str(other_path), (None, None))
+                if not other_subset or not other_label:
+                    other_subset, other_label = _derive_subset_label_from_path(other_path)
+
+                other_dst = QUARANTINE_ROOT / run_id / (other_subset or "unknown_subset") / (other_label or "unknown_label") / other_path.name
+
+                if str(other_path) not in planned_srcs:
+                    planned.append((other_path, other_dst, f))
+                    planned_srcs.add(str(other_path))
+                    counts_by_code[f.code] += 1
+            # Done with this finding
             continue
 
         # Special handling for duplicates based on policy

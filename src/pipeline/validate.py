@@ -420,13 +420,25 @@ def validate_dataset(
                     used_sig = content_sig if content_sig in seen_content_hashes else content_sig_flip
 
                 if dup_hit and first_path is not None:
-                    log.error(f"[DUPLICATE] {p} dup of {first_path}")
+                    # Determine if the duplicate crosses class boundaries
+                    cur_label = p.parent.name
+                    first_label = first_path.parent.name
+                    same_label = (cur_label == first_label)
+
+                    code = "DUPLICATE" if same_label else "CROSSCLASS_DUP"
+                    log.error(f"[{code}] {p} dup of {first_path} (cur_label={cur_label}, first_label={first_label})")
                     n_errors += 1
                     _record(
-                        "error", "DUPLICATE", p, label=label,
+                        "error", code, p, label=label,
                         sha1=used_sig,                     # key used by cleanup
                         duplicate_of=str(first_path),
-                        details={"file_sha1": file_sig, "content_sha1": content_sig, "mode": "both"},
+                        details={
+                            "file_sha1": file_sig,
+                            "content_sha1": content_sig,
+                            "mode": "both",
+                            "cur_label": cur_label,
+                            "first_label": first_label,
+                        },
                     )
                     dup_groups.setdefault(used_sig, [str(first_path)])
                     if str(p) not in dup_groups[used_sig]:
@@ -457,9 +469,32 @@ def validate_dataset(
                                 score = _ssim_similarity(p, prev_path, size=size)
                                 same_class = (p.parent.name == prev_path.parent.name)
 
-                                if not same_class or score < ssim_thresh:
+                                if score < ssim_thresh:
                                     # Keep the visibility log, but do not record a warning
                                     log.debug(f"[PHASH_REJECTED] {p} vs {prev_path} (d={d}, ssim={score:.3f})")
+                                    continue
+
+                                # Cross-class near-duplicate => error, recorded immediately
+                                if not same_class:
+                                    cur_label = p.parent.name
+                                    other_label = prev_path.parent.name
+                                    log.error(
+                                        f"[CROSSCLASS_NEAR_DUP] {p} ~ {prev_path} "
+                                        f"(cur_label={cur_label}, other_label={other_label}; d={d}, ssim={score:.3f})"
+                                    )
+                                    n_errors += 1
+                                    _record(
+                                        "error", "CROSSCLASS_NEAR_DUP", p, label=label,
+                                        details={
+                                            "hamming": int(d),
+                                            "threshold": int(phash_thresh),
+                                            "ssim": round(score, 3),
+                                            "cur_label": cur_label,
+                                            "other_label": other_label,
+                                        },
+                                        duplicate_of=str(prev_path),
+                                    )
+                                    # Do not consider cross-class pairs for same-class best tracking
                                     continue
 
                                 # Track the best acceptable candidate (lowest Hamming, then highest SSIM)
