@@ -495,7 +495,7 @@ def validate_dataset(
                                         duplicate_of=str(prev_path),
                                     )
                                     # Do not consider cross-class pairs for same-class best tracking
-                                    continue
+                                    break
 
                                 # Track the best acceptable candidate (lowest Hamming, then highest SSIM)
                                 if (best_path is None) or (d < best_dist) or (d == best_dist and score > best_ssim):
